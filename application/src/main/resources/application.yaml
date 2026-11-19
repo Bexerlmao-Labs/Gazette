@@ -1,3 +1,17 @@
 spring:
   application:
-    name: application
+    name: gazette-press
+  datasource:
+    url: jdbc:postgresql://localhost:5432/gazette
+    username: postgres
+    password: postgres
+
+server:
+  port: 8080
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+  global-config:
+    banner: false
