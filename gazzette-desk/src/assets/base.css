@@ -1,0 +1,125 @@
+/* ------------------------------------------------------------------
+   PIXELINK — design tokens
+   米白纸张 + 墨线 + 像素硬投影
+------------------------------------------------------------------ */
+:root {
+  /* paper */
+  --paper: #f4efe3;
+  --paper-2: #fbf7ec;
+  --paper-3: #e9e1cf;
+
+  /* ink */
+  --ink: #1d1c18;
+  --ink-2: #45423a;
+  --muted: #8b8373;
+  --line: #dbd3c0;
+
+  /* accents */
+  --accent: #df5430;
+  --accent-2: #ffc857;
+  --accent-soft: #f6d9cd;
+  --good: #3d7a5a;
+
+  /* led board */
+  --board: #1b1b18;
+  --board-dot: #33322b;
+
+  /* elevation */
+  --shadow-sm: 2px 2px 0 var(--ink);
+  --shadow: 3px 3px 0 var(--ink);
+  --shadow-lg: 4px 4px 0 var(--ink);
+
+  --font-mono:
+    'Cascadia Mono', 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, 'SFMono-Regular', Consolas,
+    'Courier New', 'PingFang SC', 'Microsoft YaHei', monospace;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  min-height: 100vh;
+  background-color: var(--paper);
+  background-image:
+    linear-gradient(to right, rgba(29, 28, 24, 0.032) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(29, 28, 24, 0.032) 1px, transparent 1px);
+  background-size: 24px 24px;
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+img,
+svg,
+canvas {
+  display: block;
+  max-width: 100%;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  border: none;
+  background: none;
+  cursor: pointer;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+ul,
+ol {
+  list-style: none;
+}
+
+code,
+pre {
+  font-family: var(--font-mono);
+}
+
+::selection {
+  background: var(--accent);
+  color: #fff8f1;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--paper-3);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--ink);
+  border: 2px solid var(--paper-3);
+}
