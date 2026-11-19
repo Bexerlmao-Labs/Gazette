@@ -13,8 +13,20 @@
     <packaging>pom</packaging>
     <modules>
         <module>device</module>
-        <module>user</module>
     </modules>
+
+    <dependencies>
+        <!-- 模块内实体使用 MyBatis-Plus 注解与 BaseMapper -->
+        <dependency>
+            <groupId>com.baomidou</groupId>
+            <artifactId>mybatis-plus-spring-boot4-starter</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <optional>true</optional>
+        </dependency>
+    </dependencies>
 
     <properties>
         <maven.compiler.source>21</maven.compiler.source>

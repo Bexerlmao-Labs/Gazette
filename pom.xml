@@ -68,15 +68,9 @@
                 <version>3.5.17</version>
             </dependency>
             <dependency>
-                <groupId>cn.dev33</groupId>
-                <artifactId>sa-token-redis-jackson</artifactId>
-                <version>1.46.0</version>
-            </dependency>
-            <dependency>
-                <groupId>cn.dev33</groupId>
-                <!-- Spring Boot 4 专用 starter（sa-token-spring-boot-starter 是 Boot 2 的） -->
-                <artifactId>sa-token-spring-boot4-starter</artifactId>
-                <version>1.46.0</version>
+                <groupId>com.google.zxing</groupId>
+                <artifactId>core</artifactId>
+                <version>3.5.3</version>
             </dependency>
         </dependencies>
     </dependencyManagement>

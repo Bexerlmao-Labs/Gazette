@@ -1,8 +1,8 @@
 # 墨水屏动态画面内容存储方案
 
 > 状态：草案 v1
-> 适用模块：`module/device`、`module/user`
-> 关联表结构：`sql/01_user.sql`、`sql/02_scene.sql`、`sql/03_device.sql`
+> 适用模块：`module/device`
+> 关联表结构：`sql/01_scene.sql`、`sql/02_device.sql`
 
 ---
 
@@ -158,7 +158,7 @@ t_scene(base+DSL) ──► 服务端渲染器：底图 + DSL + 数据集 → �
 |---|---|
 | 用户原始画面（静态底图） | `t_scene.base_image`（BYTEA；量大后迁对象存储 + `base_image_url`） |
 | 动态元素描述 | `t_scene.overlay_dsl`（TEXT，一行一元素） |
-| 场景归属与多设备复用 | `t_scene.user_id` ↔ `t_device.current_scene_id`（一个场景可绑多台设备） |
+| 场景与多设备复用 | `t_device.current_scene_id`（一个场景可绑多台设备） |
 | 当前显示内容校验 | `t_device.current_hash`（最终渲染位图哈希） |
 | 已废弃 | ~~`t_device_image`（每帧图）~~、~~`t_device_push_log`~~ |
 
