@@ -1,7 +1,7 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { defineStore } from 'pinia'
 
-export type Tool = 'pen' | 'eraser' | 'fill' | 'picker'
+export type Tool = 'pen' | 'eraser' | 'fill' | 'picker' | 'rect'
 export type PixelShape = 'square' | 'round'
 export type ModalName = 'wifi' | 'export' | 'settings' | null
 
@@ -84,7 +84,6 @@ export const useDisplayStore = defineStore('display', () => {
 
   const tool = ref<Tool>('pen')
   const color = ref(DEFAULT_INK_COLORS[2]?.hex ?? '#e4574c')
-  const brush = ref(1)
   const shape = ref<PixelShape>('square')
   const cursor = ref<{ x: number; y: number } | null>(null)
 

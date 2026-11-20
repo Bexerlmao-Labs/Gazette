@@ -7,6 +7,7 @@ const store = useDisplayStore()
 const TOOLS: { key: Tool; label: string; icon: string }[] = [
   { key: 'pen', label: '画笔', icon: 'pen' },
   { key: 'eraser', label: '橡皮', icon: 'eraser' },
+  { key: 'rect', label: '矩形', icon: 'rect' },
   { key: 'fill', label: '填充', icon: 'fill' },
   { key: 'picker', label: '取色', icon: 'picker' },
 ]
@@ -33,52 +34,33 @@ function pickColor(hex: string) {
       </button>
     </div>
 
-    <div class="tools__row tools__row--between">
-      <div class="brush">
-        <span class="label brush__label">笔刷</span>
-        <div class="seg">
-          <button
-            v-for="n in [1, 2, 3]"
-            :key="n"
-            :class="{ active: store.brush === n }"
-            :title="`${n}×${n} 笔刷`"
-            @click="store.brush = n"
-          >
-            {{ n }}
-          </button>
-        </div>
-      </div>
-
-      <div class="acts">
-        <button class="iconbtn" :disabled="!store.canUndo" title="撤销" @click="store.undo()">
-          <PixelIcon name="undo" :size="15" />
-        </button>
-        <button class="iconbtn" :disabled="!store.canRedo" title="重做" @click="store.redo()">
-          <PixelIcon name="redo" :size="15" />
-        </button>
-        <button class="iconbtn" title="反色" @click="store.invert()">
-          <PixelIcon name="invert" :size="15" />
-        </button>
-        <button class="iconbtn" title="清空画布" @click="store.clear()">
-          <PixelIcon name="trash" :size="15" />
-        </button>
-      </div>
+    <div class="tools__row tools__row--acts">
+      <button class="iconbtn" :disabled="!store.canUndo" title="撤销" @click="store.undo()">
+        <PixelIcon name="undo" :size="15" />
+      </button>
+      <button class="iconbtn" :disabled="!store.canRedo" title="重做" @click="store.redo()">
+        <PixelIcon name="redo" :size="15" />
+      </button>
+      <button class="iconbtn" title="反色" @click="store.invert()">
+        <PixelIcon name="invert" :size="15" />
+      </button>
+      <button class="iconbtn" title="清空画布" @click="store.clear()">
+        <PixelIcon name="trash" :size="15" />
+      </button>
     </div>
 
     <div class="palette">
       <div class="palette__head">
         <span class="label palette__label">墨水颜色</span>
         <code class="palette__code">{{ store.color.toUpperCase() }}</code>
-        <button class="iconbtn" title="编辑墨水颜色与占位符" @click="store.openModal('settings')">
+        <button class="palette__edit" title="屏幕尺寸、颜色勾选与位图填充符" @click="store.openModal('settings')">
           <PixelIcon name="gear" :size="13" />
+          <span>屏幕设置</span>
         </button>
       </div>
-      <div
-        class="swatches"
-        :style="{ gridTemplateColumns: `repeat(${store.palette.length}, 1fr)` }"
-      >
+      <div class="swatches">
         <button
-          v-for="c in store.palette"
+          v-for="c in store.activePalette"
           :key="c.hex + c.char"
           class="swatch"
           :class="{ active: store.color === c.hex }"
@@ -102,15 +84,13 @@ function pickColor(hex: string) {
 
 .tools__row {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   gap: 8px;
 }
 
-.tools__row--between {
+.tools__row--acts {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
+  gap: 6px;
 }
 
 .tool {
@@ -141,16 +121,6 @@ function pickColor(hex: string) {
   box-shadow: var(--shadow-sm);
 }
 
-.brush {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.brush__label {
-  margin: 0;
-}
-
 .acts {
   display: flex;
   gap: 6px;
@@ -178,20 +148,38 @@ function pickColor(hex: string) {
   letter-spacing: 0.1em;
 }
 
-.palette__head .iconbtn {
+.palette__edit {
+  display: flex;
+  align-items: center;
+  gap: 5px;
   margin-left: auto;
-  width: 26px;
   height: 26px;
+  padding: 0 8px;
+  border: 2px solid var(--ink);
+  background: var(--paper);
+  color: var(--ink-2);
+  font-size: 9.5px;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease;
+}
+
+.palette__edit:hover {
+  background: var(--ink);
+  color: var(--paper);
 }
 
 .swatches {
-  display: grid;
-  gap: 4px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 
 .swatch {
-  aspect-ratio: 1;
-  width: 100%;
+  width: 20px;
+  height: 20px;
   border: 2px solid var(--ink);
   transition: transform 0.08s ease;
 }
@@ -207,13 +195,8 @@ function pickColor(hex: string) {
 }
 
 @media (max-width: 520px) {
-  .tools__row--between {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .acts {
-    justify-content: space-between;
+  .tools__row {
+    grid-template-columns: repeat(3, 1fr);
   }
 }
 </style>

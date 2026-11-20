@@ -17,6 +17,9 @@ let painting = false
 let last: { x: number; y: number } | null = null
 let lastWidth = -1
 let observer: ResizeObserver | null = null
+/** 矩形工具：起点与描边预览 */
+const rectStart = ref<{ x: number; y: number } | null>(null)
+const rectPreview = ref<{ x: number; y: number }[] | null>(null)
 
 const BOARD_BG = '#1b1b18'
 const DOT_COLOR = '#33322b'
@@ -127,6 +130,15 @@ function render() {
       }
     }
   }
+
+  // 矩形预览：拖拽过程中的描边
+  if (rectPreview.value) {
+    ctx.fillStyle = store.color
+    const psize = cell - gap * 2
+    for (const p of rectPreview.value) {
+      ctx.fillRect(p.x * cell + gap, p.y * cell + gap, psize, psize)
+    }
+  }
 }
 
 function pickCell(event: PointerEvent) {
@@ -141,14 +153,25 @@ function pickCell(event: PointerEvent) {
 
 function applyBrush(x: number, y: number) {
   const color = store.tool === 'eraser' ? '' : store.color
-  const size = store.brush
-  const startX = x - Math.floor(size / 2)
-  const startY = y - Math.floor(size / 2)
-  for (let dy = 0; dy < size; dy++) {
-    for (let dx = 0; dx < size; dx++) {
-      store.setCell(startX + dx, startY + dy, color)
-    }
+  store.setCell(x, y, color)
+}
+
+/** 计算矩形描边像素（不重复四角） */
+function rectOutline(a: { x: number; y: number }, b: { x: number; y: number }) {
+  const pts: { x: number; y: number }[] = []
+  const x1 = Math.min(a.x, b.x)
+  const x2 = Math.max(a.x, b.x)
+  const y1 = Math.min(a.y, b.y)
+  const y2 = Math.max(a.y, b.y)
+  for (let x = x1; x <= x2; x++) {
+    pts.push({ x, y: y1 })
+    if (y2 !== y1) pts.push({ x, y: y2 })
   }
+  for (let y = y1 + 1; y < y2; y++) {
+    pts.push({ x: x1, y })
+    if (x2 !== x1) pts.push({ x: x2, y })
+  }
+  return pts
 }
 
 function onPointerDown(event: PointerEvent) {
@@ -177,6 +200,14 @@ function onPointerDown(event: PointerEvent) {
     return
   }
 
+  if (store.tool === 'rect') {
+    rectStart.value = point
+    rectPreview.value = [point]
+    painting = true
+    render()
+    return
+  }
+
   painting = true
   last = point
   applyBrush(point.x, point.y)
@@ -189,6 +220,13 @@ function onPointerMove(event: PointerEvent) {
 
   if (!painting || !point || store.tool === 'fill' || store.tool === 'picker') return
 
+  // 矩形拖拽：仅更新预览
+  if (rectStart.value) {
+    rectPreview.value = rectOutline(rectStart.value, point)
+    render()
+    return
+  }
+
   const from = last ?? point
   const dx = point.x - from.x
   const dy = point.y - from.y
@@ -200,6 +238,15 @@ function onPointerMove(event: PointerEvent) {
 }
 
 function onPointerUp(event: PointerEvent) {
+  // 矩形结束：提交描边像素
+  if (rectStart.value && rectPreview.value) {
+    const color = store.color
+    for (const p of rectPreview.value) store.setCell(p.x, p.y, color)
+    rectStart.value = null
+    rectPreview.value = null
+    render()
+  }
+
   painting = false
   last = null
   const canvas = canvasEl.value
@@ -225,6 +272,16 @@ watch(
 )
 
 watch(() => store.revision, render, { flush: 'post' })
+
+// 切换工具时取消未完成的矩形
+watch(
+  () => store.tool,
+  () => {
+    rectStart.value = null
+    rectPreview.value = null
+    render()
+  },
+)
 
 onMounted(() => {
   layout()
