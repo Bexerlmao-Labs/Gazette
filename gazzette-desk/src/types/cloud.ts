@@ -5,6 +5,21 @@ export interface ApiResult<T> {
   data: T
 }
 
+/** 位图定义方案（转换模板）：目标单片机如何解读位图字节，后端拆列存储 */
+export interface BitmapEncoding {
+  /** 每像素位宽 1/2/3/4，不传则按最大编码自动推导 */
+  bits?: number
+  /** 字节内位序 */
+  bitOrder: 'msb' | 'lsb'
+  /** 各颜色编码（十六进制单字符 0-F），空字符串 = 不支持该色；黑/白默认 1/0（GxEPD2 风格） */
+  black: string
+  white: string
+  red: string
+  yellow: string
+  blue: string
+  green: string
+}
+
 /** 画面场景：原始底图 + 动态 DSL */
 export interface CloudScene {
   id: number
@@ -14,6 +29,7 @@ export interface CloudScene {
   baseImage?: string // Base64 PNG
   baseHash?: string
   overlayDsl?: string
+  bitmapEncoding?: BitmapEncoding
   updatedAt: string
 }
 

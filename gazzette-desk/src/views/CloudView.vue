@@ -13,7 +13,7 @@ import {
   saveScene,
   updateDevice,
 } from '@/utils/cloud-api'
-import { DEVICE_STATUS, type CloudDevice, type CloudScene } from '@/types/cloud'
+import { DEVICE_STATUS, type BitmapEncoding, type CloudDevice, type CloudScene } from '@/types/cloud'
 
 /* ------------------------------------------------------------- 状态 */
 
@@ -22,7 +22,50 @@ const devices = ref<CloudDevice[]>([])
 const loading = ref(false)
 const error = ref('')
 
-const sceneForm = ref({ name: '', width: 240, height: 416, baseImageBase64: '', overlayDsl: '' })
+const defaultEncoding = (): BitmapEncoding => ({
+  bitOrder: 'msb',
+  black: '1',
+  white: '0',
+  red: '',
+  yellow: '',
+  blue: '',
+  green: '',
+})
+
+/** 可选颜色定义：黑/白固定支持，其余四色可勾选启用 */
+const colorDefs = [
+  { key: 'black', label: '黑', fixed: true },
+  { key: 'white', label: '白', fixed: true },
+  { key: 'red', label: '红', fixed: false },
+  { key: 'yellow', label: '黄', fixed: false },
+  { key: 'blue', label: '蓝', fixed: false },
+  { key: 'green', label: '绿', fixed: false },
+] as const
+type ColorKey = (typeof colorDefs)[number]['key']
+
+/** 启用颜色时的默认编码 */
+const COLOR_DEFAULT_CODES: Record<ColorKey, string> = {
+  black: '1',
+  white: '0',
+  red: '2',
+  yellow: '3',
+  blue: '4',
+  green: '5',
+}
+
+function toggleColor(key: ColorKey, ev: Event) {
+  const enc = sceneForm.value.bitmapEncoding
+  enc[key] = (ev.target as HTMLInputElement).checked ? COLOR_DEFAULT_CODES[key] : ''
+}
+
+const sceneForm = ref({
+  name: '',
+  width: 240,
+  height: 416,
+  baseImageBase64: '',
+  overlayDsl: '',
+  bitmapEncoding: defaultEncoding(),
+})
 const deviceForm = ref({ name: '', model: '', width: 240, height: 416 })
 
 /** 编辑中的场景 id → DSL 文本 */
@@ -81,8 +124,16 @@ async function submitScene() {
       height: sceneForm.value.height,
       baseImageBase64: sceneForm.value.baseImageBase64 || undefined,
       overlayDsl: sceneForm.value.overlayDsl || undefined,
+      bitmapEncoding: { ...sceneForm.value.bitmapEncoding },
     })
-    sceneForm.value = { name: '', width: 240, height: 416, baseImageBase64: '', overlayDsl: '' }
+    sceneForm.value = {
+      name: '',
+      width: 240,
+      height: 416,
+      baseImageBase64: '',
+      overlayDsl: '',
+      bitmapEncoding: defaultEncoding(),
+    }
     await loadAll()
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e)
@@ -101,6 +152,7 @@ async function saveDsl(scene: CloudScene) {
       width: scene.width,
       height: scene.height,
       overlayDsl: editingDsl.value[scene.id] ?? scene.overlayDsl ?? '',
+      bitmapEncoding: scene.bitmapEncoding ?? defaultEncoding(),
     })
     await loadAll()
   } catch (e) {
@@ -275,6 +327,49 @@ function fmtTime(t?: string) {
           spellcheck="false"
           placeholder="datetime 8,4,140,24 format=%H:%M font=3&#10;text 8,34,200,16 font=1 &quot;{weather.desc}&quot;"
         />
+      </div>
+      <div class="field">
+        <span class="label">位图定义方案（转换模板，适配目标单片机/驱动库）</span>
+        <div class="field-row">
+          <div class="field">
+            <span class="label">位序</span>
+            <select v-model="sceneForm.bitmapEncoding.bitOrder" class="input">
+              <option value="msb">MSB</option>
+              <option value="lsb">LSB</option>
+            </select>
+          </div>
+          <div class="field">
+            <span class="label">位宽（每像素）</span>
+            <select v-model.number="sceneForm.bitmapEncoding.bits" class="input">
+              <option :value="undefined">自动</option>
+              <option :value="1">1</option>
+              <option :value="2">2</option>
+              <option :value="3">3</option>
+              <option :value="4">4</option>
+            </select>
+          </div>
+        </div>
+        <div class="field-row">
+          <div v-for="c in colorDefs" :key="c.key" class="field">
+            <span class="label">
+              {{ c.label }}
+              <input
+                v-if="!c.fixed"
+                type="checkbox"
+                :checked="sceneForm.bitmapEncoding[c.key] !== ''"
+                @change="toggleColor(c.key, $event)"
+              />
+            </span>
+            <input
+              v-model="sceneForm.bitmapEncoding[c.key]"
+              class="input"
+              maxlength="1"
+              placeholder="0-F"
+              :disabled="!c.fixed && sceneForm.bitmapEncoding[c.key] === ''"
+            />
+          </div>
+        </div>
+        <span class="hint">编码为 16 进制单字符；未勾选的颜色不支持，其像素回退为黑白灰度</span>
       </div>
       <button class="btn btn--primary" :disabled="loading" @click="submitScene">
         <PixelIcon name="upload" :size="14" />

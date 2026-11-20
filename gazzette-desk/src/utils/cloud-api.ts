@@ -1,5 +1,5 @@
 /** 云端 API 轻封装：统一解包 R<T>，非 0 抛错 */
-import type { ApiResult, CloudDevice, CloudScene, DeviceDisplay } from '@/types/cloud'
+import type { ApiResult, BitmapEncoding, CloudDevice, CloudScene, DeviceDisplay } from '@/types/cloud'
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, init)
@@ -34,6 +34,7 @@ export function saveScene(scene: {
   height?: number
   baseImageBase64?: string
   overlayDsl?: string
+  bitmapEncoding?: BitmapEncoding
 }) {
   return request<CloudScene>('/api/scene', json({ method: 'POST' }, scene))
 }
