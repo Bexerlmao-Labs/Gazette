@@ -1,5 +1,6 @@
 package cc.bexerlmao.gazette.module.device.dto;
 
+import cc.bexerlmao.gazette.module.device.render.BitmapEncoding;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import lombok.Data;
@@ -24,4 +25,7 @@ public class SceneSaveRequest {
 
     /** 动态元素 DSL 文本 */
     private String overlayDsl;
+
+    /** 位图定义方案（转换模板），可空；字段详见 BitmapEncoding */
+    private BitmapEncoding bitmapEncoding;
 }

@@ -18,7 +18,7 @@ import java.util.Base64;
 /**
  * 固件拉取接口（设备端调用，不走登录鉴权）：
  * GET /api/device/display?sn=xx&key=xx&hash=旧哈希[&battery=95]
- * 哈希一致返回 changed=false；不一致返回新位图（Base64 PNG）。
+ * 哈希一致返回 changed=false；不一致返回新位图（Base64 编码，按场景位图定义方案转换后的字节）。
  */
 @Slf4j
 @RestController
@@ -37,8 +37,8 @@ public class DeviceGatewayController {
         private String hash;
         private Integer width;
         private Integer height;
-        private String format;
-        private String image; // Base64 PNG
+        private String format; // 位图定义方案标识，如 bw-msb-b1 / bwr-plane-msb / bwr-2bpp-lsb
+        private String image; // Base64 编码的位图，排布由 format 描述
     }
 
     @GetMapping("/display")
@@ -78,10 +78,10 @@ public class DeviceGatewayController {
 
         resp.setChanged(true);
         resp.setHash(rendered.hash());
-        resp.setWidth(scene.getWidth());
-        resp.setHeight(scene.getHeight());
-        resp.setFormat("png");
-        resp.setImage(Base64.getEncoder().encodeToString(rendered.png()));
+        resp.setWidth(rendered.width());
+        resp.setHeight(rendered.height());
+        resp.setFormat(rendered.format());
+        resp.setImage(Base64.getEncoder().encodeToString(rendered.bitmap()));
         return R.ok(resp);
     }
 }

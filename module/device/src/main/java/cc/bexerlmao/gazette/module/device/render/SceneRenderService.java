@@ -4,13 +4,13 @@ import com.google.zxing.BarcodeFormat;
 import cc.bexerlmao.gazette.module.device.entity.Scene;
 import com.google.zxing.common.BitMatrix;
 import com.google.zxing.qrcode.QRCodeWriter;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import javax.imageio.ImageIO;
 import java.awt.*;
 import java.awt.image.BufferedImage;
-import java.awt.image.IndexColorModel;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.security.MessageDigest;
@@ -22,25 +22,145 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 场景渲染器：静态底图 + DSL 动态元素 + 数据集 → 最终 1bpp 位图（PNG）。
+ * 场景渲染器：静态底图 + DSL 动态元素 + 数据集 → 最终 1bpp 打包位图（墨水屏原始位图）。
  * 渲染只在服务端进行，设备端只消费最终位图与哈希。
  */
 @Slf4j
 @Service
+@RequiredArgsConstructor
 public class SceneRenderService {
 
     private static final int[] FONT_SIZES = {12, 16, 24, 32, 48};
     private static final Color BLACK = Color.BLACK;
     private static final Color WHITE = Color.WHITE;
 
-    /** 渲染结果：PNG 字节 + 内容哈希 */
-    public record Rendered(byte[] png, String hash) {
+    /** 规范色彩索引（服务端统一存储格式，最多 6 色） */
+    private static final int C_BLACK = 0, C_WHITE = 1, C_RED = 2, C_YELLOW = 3, C_BLUE = 4, C_GREEN = 5;
+
+    /** 规范色彩对应的预览 RGB */
+    private static final int[] PREVIEW_RGB = {0x000000, 0xFFFFFF, 0xD03A3A, 0xE0C020, 0x2864C8, 0x2E8B44};
+
+    /** 渲染结果：按场景位图定义方案编码后的位图 + 实际尺寸 + 协议格式标识 + 内容哈希 */
+    public record Rendered(byte[] bitmap, int width, int height, String format, String hash) {
     }
 
     /**
      * 渲染场景。data 为变量数据集（点分命名空间的键值对，数组用于 chart 序列）。
      */
     public Rendered render(Scene scene, Map<String, Object> data) {
+        BufferedImage canvas = renderCanvas(scene, data);
+        BitmapEncoding enc = parseEncoding(scene);
+        enc.setBits(resolveBits(enc)); // 位宽确定后 format 与打包逻辑保持一致
+        int[] idx = quantize(canvas, enc); // 规范色彩索引 0-5
+        byte[] bitmap = packCodes(idx, canvas.getWidth(), canvas.getHeight(), enc);
+        return new Rendered(bitmap, canvas.getWidth(), canvas.getHeight(),
+                enc.format(), sha256Hex(bitmap));
+    }
+
+    /** 位宽：优先取配置（1-4）；未配置时按最大颜色编码自动推导 */
+    private int resolveBits(BitmapEncoding enc) {
+        if (enc.getBits() != null) {
+            return enc.bitsOr1();
+        }
+        int max = Math.max(
+                Math.max(BitmapEncoding.parseCode(enc.getBlack()), BitmapEncoding.parseCode(enc.getWhite())),
+                Math.max(Math.max(BitmapEncoding.parseCode(enc.getRed()), BitmapEncoding.parseCode(enc.getYellow())),
+                        Math.max(BitmapEncoding.parseCode(enc.getBlue()), BitmapEncoding.parseCode(enc.getGreen()))));
+        return Math.max(1, 32 - Integer.numberOfLeadingZeros(Math.max(max, 0)));
+    }
+
+    /** 浏览器预览用：规范色彩直接映射 RGB（黑/白/红/黄/蓝/绿），仅给人看，设备端不下发 PNG */
+    public byte[] renderPreviewPng(Scene scene, Map<String, Object> data) {
+        BufferedImage canvas = renderCanvas(scene, data);
+        int[] idx = quantize(canvas, parseEncoding(scene));
+        int[] rgb = new int[idx.length];
+        for (int i = 0; i < idx.length; i++) {
+            rgb[i] = PREVIEW_RGB[idx[i]];
+        }
+        BufferedImage out = new BufferedImage(canvas.getWidth(), canvas.getHeight(), BufferedImage.TYPE_INT_RGB);
+        out.setRGB(0, 0, canvas.getWidth(), canvas.getHeight(), rgb, 0, canvas.getWidth());
+        try {
+            ByteArrayOutputStream bos = new ByteArrayOutputStream();
+            ImageIO.write(out, "png", bos);
+            return bos.toByteArray();
+        } catch (Exception e) {
+            throw new IllegalStateException("png encode failed", e);
+        }
+    }
+
+    /** 从场景拆列拼装位图定义方案；未配置时按默认（1bpp/msb，黑=1 白=0，GxEPD2 风格） */
+    private BitmapEncoding parseEncoding(Scene scene) {
+        BitmapEncoding e = new BitmapEncoding();
+        e.setBits(scene.getBitmapBits());
+        e.setBitOrder(scene.getBitmapBitOrder());
+        e.setBlack(defaultCode(scene.getBitmapBlack(), "1"));
+        e.setWhite(defaultCode(scene.getBitmapWhite(), "0"));
+        e.setRed(scene.getBitmapRed());
+        e.setYellow(scene.getBitmapYellow());
+        e.setBlue(scene.getBitmapBlue());
+        e.setGreen(scene.getBitmapGreen());
+        return e;
+    }
+
+    private String defaultCode(String code, String def) {
+        return BitmapEncoding.parseCode(code) >= 0 ? code.trim().substring(0, 1) : def;
+    }
+
+    /**
+     * 画布 → 规范色彩索引（服务端统一存储格式，0-5）：
+     * 黑/白按感知灰度阈值二值化；红/黄/蓝/绿按色相判定，且仅在该色已配置编码时参与匹配。
+     */
+    private int[] quantize(BufferedImage src, BitmapEncoding enc) {
+        boolean hasRed = BitmapEncoding.parseCode(enc.getRed()) >= 0;
+        boolean hasYellow = BitmapEncoding.parseCode(enc.getYellow()) >= 0;
+        boolean hasBlue = BitmapEncoding.parseCode(enc.getBlue()) >= 0;
+        boolean hasGreen = BitmapEncoding.parseCode(enc.getGreen()) >= 0;
+        int w = src.getWidth(), h = src.getHeight();
+        int[] out = new int[w * h];
+        int[] buf = new int[w];
+        for (int y = 0; y < h; y++) {
+            src.getRGB(0, y, w, 1, buf, 0, w);
+            for (int x = 0; x < w; x++) {
+                int rgb = buf[x];
+                int r = rgb >> 16 & 0xFF, g = rgb >> 8 & 0xFF, b = rgb & 0xFF;
+                if (hasRed && isRed(r, g, b)) {
+                    out[y * w + x] = C_RED;
+                } else if (hasYellow && isYellow(r, g, b)) {
+                    out[y * w + x] = C_YELLOW;
+                } else if (hasBlue && isBlue(r, g, b)) {
+                    out[y * w + x] = C_BLUE;
+                } else if (hasGreen && isGreen(r, g, b)) {
+                    out[y * w + x] = C_GREEN;
+                } else {
+                    int gray = (r * 299 + g * 587 + b * 114) / 1000;
+                    out[y * w + x] = gray < 128 ? C_BLACK : C_WHITE;
+                }
+            }
+        }
+        return out;
+    }
+
+    /** 红色：r 明显大于 g/b */
+    private boolean isRed(int r, int g, int b) {
+        return r > 150 && r - Math.max(g, b) > 60;
+    }
+
+    /** 黄色：r/g 都高且接近，b 明显低 */
+    private boolean isYellow(int r, int g, int b) {
+        return r > 150 && g > 140 && Math.abs(r - g) < 80 && Math.min(r, g) - b > 60;
+    }
+
+    /** 蓝色：b 明显大于 r/g */
+    private boolean isBlue(int r, int g, int b) {
+        return b > 130 && b - Math.max(r, g) > 40;
+    }
+
+    /** 绿色：g 明显大于 r/b */
+    private boolean isGreen(int r, int g, int b) {
+        return g > 110 && g - Math.max(r, b) > 40;
+    }
+
+    private BufferedImage renderCanvas(Scene scene, Map<String, Object> data) {
         int w = scene.getWidth() == null || scene.getWidth() <= 0 ? 128 : scene.getWidth();
         int h = scene.getHeight() == null || scene.getHeight() <= 0 ? 296 : scene.getHeight();
         BufferedImage canvas = new BufferedImage(w, h, BufferedImage.TYPE_INT_RGB);
@@ -61,8 +181,7 @@ public class SceneRenderService {
         } finally {
             g.dispose();
         }
-        byte[] png = to1bppPng(canvas);
-        return new Rendered(png, sha256Hex(png));
+        return canvas;
     }
 
     /* ------------------------------------------------------------ 元素分发 */
@@ -369,26 +488,59 @@ public class SceneRenderService {
         }
     }
 
-    /** 彩色画布 → 1bpp（黑白）PNG，墨水屏友好 */
-    private byte[] to1bppPng(BufferedImage src) {
-        int w = src.getWidth(), h = src.getHeight();
-        IndexColorModel palette = new IndexColorModel(1, 2,
-                new byte[]{0, (byte) 0xFF}, new byte[]{0, (byte) 0xFF}, new byte[]{0, (byte) 0xFF});
-        BufferedImage out = new BufferedImage(w, h, BufferedImage.TYPE_BYTE_BINARY, palette);
+    /* ------------------------------------------------------------ 位图定义方案编码 */
+
+    /**
+     * 规范色彩索引 → 目标单片机位图：
+     * 每像素按其颜色的编码（code）写入 bits 位（1-4），行优先紧缩，行宽补齐到整字节；
+     * bitOrder 决定字节内位序（msb/lsb），像素可能跨字节。
+     */
+    private byte[] packCodes(int[] idx, int w, int h, BitmapEncoding enc) {
+        int[] codes = {
+                BitmapEncoding.parseCode(enc.getBlack()),
+                BitmapEncoding.parseCode(enc.getWhite()),
+                BitmapEncoding.parseCode(enc.getRed()),
+                BitmapEncoding.parseCode(enc.getYellow()),
+                BitmapEncoding.parseCode(enc.getBlue()),
+                BitmapEncoding.parseCode(enc.getGreen())
+        };
+        // 黑白编码兑底（parseEncoding 已保证非负，这里防御）
+        if (codes[C_BLACK] < 0) codes[C_BLACK] = 1;
+        if (codes[C_WHITE] < 0) codes[C_WHITE] = 0;
+
+        // 位宽已由 resolveBits 确定并写入 enc
+        int bits = enc.bitsOr1();
+
+        int stride = (w * bits + 7) / 8;
+        byte[] out = new byte[stride * h];
+        boolean lsb = enc.isLsb();
+        int mask = (1 << bits) - 1;
         for (int y = 0; y < h; y++) {
             for (int x = 0; x < w; x++) {
-                int rgb = src.getRGB(x, y);
-                int gray = (int) (((rgb >> 16 & 0xFF) * 299 + (rgb >> 8 & 0xFF) * 587 + (rgb & 0xFF) * 114) / 1000);
-                out.setRGB(x, y, gray < 128 ? 0xFF000000 : 0xFFFFFFFF);
+                int code = codes[idx[y * w + x]] & mask;
+                int off = (x * bits) % 8;             // 字节内位偏移
+                int byteIdx = y * stride + (x * bits) / 8;
+                if (lsb) {
+                    if (off + bits <= 8) {
+                        out[byteIdx] |= (byte) (code << off);
+                    } else {
+                        int first = 8 - off;
+                        out[byteIdx] |= (byte) ((code & ((1 << first) - 1)) << off);
+                        out[byteIdx + 1] |= (byte) (code >>> first);
+                    }
+                } else {
+                    if (off + bits <= 8) {
+                        out[byteIdx] |= (byte) (code << (8 - off - bits));
+                    } else {
+                        int first = 8 - off;
+                        out[byteIdx] |= (byte) (code >>> (bits - first));
+                        int rest = bits - first;
+                        out[byteIdx + 1] |= (byte) ((code & ((1 << rest) - 1)) << (8 - rest));
+                    }
+                }
             }
         }
-        try {
-            ByteArrayOutputStream bos = new ByteArrayOutputStream();
-            ImageIO.write(out, "png", bos);
-            return bos.toByteArray();
-        } catch (Exception e) {
-            throw new IllegalStateException("png encode failed", e);
-        }
+        return out;
     }
 
     private String sha256Hex(byte[] bytes) {

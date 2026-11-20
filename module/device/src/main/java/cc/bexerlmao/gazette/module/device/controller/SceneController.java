@@ -6,7 +6,9 @@ import cc.bexerlmao.gazette.module.device.entity.Scene;
 import cc.bexerlmao.gazette.module.device.service.SceneService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.CacheControl;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -41,10 +43,13 @@ public class SceneController {
         return R.ok();
     }
 
-    /** 渲染预览：body 为变量数据集（可空），返回 PNG */
+    /** 渲染预览：body 为变量数据集（可空）。即时渲染、不落库，响应禁止缓存 */
     @PostMapping(value = "/{id}/preview", consumes = MediaType.ALL_VALUE)
-    public byte[] preview(@PathVariable Long id,
-                          @RequestBody(required = false) Map<String, Object> data) {
-        return sceneService.preview(id, data);
+    public ResponseEntity<byte[]> preview(@PathVariable Long id,
+                                          @RequestBody(required = false) Map<String, Object> data) {
+        return ResponseEntity.ok()
+                .contentType(MediaType.IMAGE_PNG)
+                .cacheControl(CacheControl.noStore())
+                .body(sceneService.preview(id, data));
     }
 }

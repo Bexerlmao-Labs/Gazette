@@ -5,8 +5,10 @@ import cc.bexerlmao.gazette.module.device.dto.SceneSaveRequest;
 import cc.bexerlmao.gazette.module.device.entity.Scene;
 import cc.bexerlmao.gazette.module.device.mapper.DeviceMapper;
 import cc.bexerlmao.gazette.module.device.mapper.SceneMapper;
+import cc.bexerlmao.gazette.module.device.render.BitmapEncoding;
 import cc.bexerlmao.gazette.module.device.render.SceneRenderService;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -63,6 +65,17 @@ public class SceneService {
         scene.setWidth(req.getWidth() == null ? 0 : req.getWidth());
         scene.setHeight(req.getHeight() == null ? 0 : req.getHeight());
         scene.setOverlayDsl(req.getOverlayDsl());
+        if (req.getBitmapEncoding() != null) {
+            BitmapEncoding e = req.getBitmapEncoding();
+            scene.setBitmapBits(e.getBits());
+            scene.setBitmapBitOrder(e.getBitOrder() == null || e.getBitOrder().isBlank() ? null : e.getBitOrder().toLowerCase());
+            scene.setBitmapBlack(BitmapEncoding.normCode(e.getBlack()));
+            scene.setBitmapWhite(BitmapEncoding.normCode(e.getWhite()));
+            scene.setBitmapRed(BitmapEncoding.normCode(e.getRed()));
+            scene.setBitmapYellow(BitmapEncoding.normCode(e.getYellow()));
+            scene.setBitmapBlue(BitmapEncoding.normCode(e.getBlue()));
+            scene.setBitmapGreen(BitmapEncoding.normCode(e.getGreen()));
+        }
         if (req.getBaseImageBase64() != null && !req.getBaseImageBase64().isBlank()) {
             byte[] bytes = Base64.getDecoder().decode(stripDataUrl(req.getBaseImageBase64()));
             scene.setBaseImage(bytes);
@@ -91,9 +104,9 @@ public class SceneService {
         deviceMapper.update(null, unbind);
     }
 
-    /** 渲染预览：DSL + 数据集 → PNG 字节 */
+    /** 渲染预览：DSL + 数据集 → PNG 字节（仅供浏览器预览，设备端走位图接口） */
     public byte[] preview(Long id, Map<String, Object> data) {
-        return renderService.render(get(id), data).png();
+        return renderService.renderPreviewPng(get(id), data);
     }
 
     private String stripDataUrl(String base64) {
