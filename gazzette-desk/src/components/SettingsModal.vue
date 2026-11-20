@@ -6,7 +6,8 @@ import { SCREEN_PRESETS, useDisplayStore } from '@/stores/display'
 
 const store = useDisplayStore()
 
-const MAX_COLORS = 8
+/** 白色为底色，始终启用、不可取消勾选 */
+const LOCKED_COLORS = 1
 
 const duplicateChars = computed(() => {
   const seen = new Map<string, number>()
@@ -17,20 +18,6 @@ const duplicateChars = computed(() => {
   }
   return [...seen.entries()].filter(([, n]) => n > 1).map(([k]) => k)
 })
-
-function addColor() {
-  if (store.palette.length >= MAX_COLORS) return
-  store.palette.push({
-    hex: '#999999',
-    name: `颜色 ${store.palette.length + 1}`,
-    char: String(store.palette.length),
-  })
-}
-
-function removeColor(index: number) {
-  if (store.palette.length <= 1) return
-  store.palette.splice(index, 1)
-}
 
 function onCharInput(index: number, value: string) {
   const item = store.palette[index]
@@ -65,45 +52,41 @@ function applyPreset(preset: (typeof SCREEN_PRESETS)[number]) {
 <template>
   <AppModal title="墨水屏设置" subtitle="E-PAPER INK SETTINGS" @close="store.closeModal()">
     <div class="field">
-      <span class="label">墨水颜色与占位符</span>
-      <p class="hint">照片转换与导出数据都会按此处的颜色与占位符处理</p>
+      <div class="field__head">
+        <span class="label">墨水颜色与填充符</span>
+        <span class="count">已启用 {{ store.activePalette.length }} / {{ store.palette.length }}</span>
+      </div>
 
       <div class="colors">
-        <div v-for="(c, i) in store.palette" :key="i" class="color-row">
-          <label class="color-swatch" :style="{ background: c.hex }">
-            <input v-model="c.hex" type="color" :title="`选择 ${c.name} 颜色`" />
+        <div
+          v-for="(c, i) in store.palette"
+          :key="c.hex"
+          class="color-row"
+          :class="{ 'color-row--off': !c.enabled }"
+        >
+          <label
+            class="check"
+            :class="{ 'check--locked': i < LOCKED_COLORS }"
+            :title="i < LOCKED_COLORS ? '底色，始终启用' : '勾选后可在画板中使用该颜色'"
+          >
+            <input v-model="c.enabled" type="checkbox" :disabled="i < LOCKED_COLORS" />
           </label>
-          <input v-model="c.name" class="input color-name" placeholder="颜色名" />
+          <span class="color-swatch" :style="{ background: c.hex }" :title="`${c.name} ${c.hex}`" />
           <input
             class="input color-char"
             :value="c.char"
             placeholder="0"
             maxlength="1"
-            title="导出与推送时该颜色使用的占位符"
+            :disabled="!c.enabled"
+            title="导出与推送时该颜色使用的位图填充符"
             @input="onCharInput(i, ($event.target as HTMLInputElement).value)"
           />
-          <button
-            class="iconbtn"
-            :disabled="store.palette.length <= 1"
-            title="删除颜色"
-            @click="removeColor(i)"
-          >
-            <PixelIcon name="trash" :size="13" />
-          </button>
         </div>
       </div>
 
       <div class="color-actions">
-        <button
-          class="btn btn--sm"
-          :disabled="store.palette.length >= MAX_COLORS"
-          @click="addColor"
-        >
-          <PixelIcon name="pen" :size="13" />
-          添加颜色
-        </button>
         <p v-if="duplicateChars.length" class="dup">
-          占位符重复：{{ duplicateChars.join(' ') }}，请修改为不同字符
+          填充符重复：{{ duplicateChars.join(' ') }}，请修改为不同字符
         </p>
       </div>
     </div>
@@ -140,7 +123,7 @@ function applyPreset(preset: (typeof SCREEN_PRESETS)[number]) {
               class="input size__input"
               type="number"
               min="4"
-              max="128"
+              max="1024"
               aria-label="屏幕宽度"
               @change="applySize"
               @keyup.enter="applySize"
@@ -154,14 +137,14 @@ function applyPreset(preset: (typeof SCREEN_PRESETS)[number]) {
               class="input size__input"
               type="number"
               min="4"
-              max="128"
+              max="1024"
               aria-label="屏幕高度"
               @change="applySize"
               @keyup.enter="applySize"
             />
           </div>
         </div>
-        <p class="hint">范围 4 – 128 px，调整后保留左上角画面</p>
+        <p class="hint">范围 4 – 1024 px，调整后保留左上角画面</p>
       </div>
     </div>
   </AppModal>
@@ -174,6 +157,18 @@ function applyPreset(preset: (typeof SCREEN_PRESETS)[number]) {
   gap: 8px;
 }
 
+.field__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.count {
+  color: var(--muted);
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+}
+
 .hint {
   color: var(--muted);
   font-size: 9.5px;
@@ -181,16 +176,54 @@ function applyPreset(preset: (typeof SCREEN_PRESETS)[number]) {
 }
 
 .colors {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
 }
 
 .color-row {
-  display: grid;
-  grid-template-columns: 34px minmax(0, 1fr) 52px 30px;
-  gap: 8px;
+  display: flex;
   align-items: center;
+  gap: 8px;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  background: var(--paper);
+}
+
+.color-row--off {
+  opacity: 0.45;
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+}
+
+.check--locked {
+  cursor: not-allowed;
+}
+
+.check input {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--ink);
+  cursor: inherit;
+}
+
+.color-swatch {
+  flex: 1;
+  height: 26px;
+  border: 2px solid var(--ink);
+}
+
+.color-char {
+  flex: none;
+  width: 44px;
+  height: 26px;
+  padding: 0 4px;
+  text-align: center;
+  text-transform: uppercase;
 }
 
 .color-swatch {
@@ -214,7 +247,7 @@ function applyPreset(preset: (typeof SCREEN_PRESETS)[number]) {
 }
 
 .color-char {
-  height: 34px;
+  height: 26px;
   text-align: center;
   text-transform: uppercase;
 }
@@ -234,6 +267,7 @@ function applyPreset(preset: (typeof SCREEN_PRESETS)[number]) {
 .divider {
   height: 1px;
   background: var(--line);
+  margin: 18px 0;
 }
 
 .size-entry {

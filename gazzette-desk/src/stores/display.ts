@@ -9,13 +9,22 @@ export interface InkColor {
   hex: string
   name: string
   char: string
+  /** 是否启用（是否出现在工具栏色板中） */
+  enabled: boolean
 }
 
-/** 墨水屏默认三种颜色：白 / 黑 / 红，占位符可在「墨水屏设置」中自定义 */
+/**
+ * 墨水屏固定六色：白 / 黑 / 红 / 黄 / 蓝 / 绿。
+ * 颜色本身不可增删改，只能在「墨水屏设置」中勾选启用并自定义位图填充符；
+ * 白色为底色，始终启用；其余颜色默认启用黑/红，可在设置中勾选。
+ */
 export const DEFAULT_INK_COLORS: InkColor[] = [
-  { hex: '#ffffff', name: '白', char: '0' },
-  { hex: '#1c1b18', name: '黑', char: '1' },
-  { hex: '#e4574c', name: '红', char: '2' },
+  { hex: '#ffffff', name: '白', char: '0', enabled: true },
+  { hex: '#1c1b18', name: '黑', char: '1', enabled: true },
+  { hex: '#e4574c', name: '红', char: '2', enabled: true },
+  { hex: '#f2c53d', name: '黄', char: '3', enabled: false },
+  { hex: '#2e6fdf', name: '蓝', char: '4', enabled: false },
+  { hex: '#35a35a', name: '绿', char: '5', enabled: false },
 ]
 
 export const SCREEN_PRESETS = [
@@ -29,7 +38,7 @@ export const SCREEN_PRESETS = [
 
 const PALETTE_KEY = 'paper-web/palette'
 const MIN_SIZE = 4
-const MAX_SIZE = 128
+const MAX_SIZE = 1024
 
 /** Nordic UART Service —— ESP32 BLE 透传常用服务 */
 const BLE_SERVICE = '6e400001-b5a3-f393-e0a9-e50e24dcca9e'
@@ -48,7 +57,7 @@ function sleep(ms: number) {
   return new Promise<void>((resolve) => setTimeout(resolve, ms))
 }
 
-function isValidPalette(value: unknown): value is InkColor[] {
+function isValidPalette(value: unknown): value is { hex: string; char: string; enabled?: boolean }[] {
   return (
     Array.isArray(value) &&
     value.length > 0 &&
@@ -56,17 +65,26 @@ function isValidPalette(value: unknown): value is InkColor[] {
   )
 }
 
+/** 颜色集合固定为六色，本地只持久化每个颜色的填充符与启用状态 */
 function loadPalette(): InkColor[] {
+  const stored = new Map<string, { char: string; enabled: boolean }>()
   try {
     const raw = localStorage.getItem(PALETTE_KEY)
     if (raw) {
       const parsed: unknown = JSON.parse(raw)
-      if (isValidPalette(parsed)) return parsed
+      if (isValidPalette(parsed)) {
+        for (const c of parsed) {
+          stored.set(c.hex.toLowerCase(), { char: c.char, enabled: c.enabled !== false })
+        }
+      }
     }
   } catch {
     /* 忽略损坏的本地数据 */
   }
-  return DEFAULT_INK_COLORS.map((c) => ({ ...c }))
+  return DEFAULT_INK_COLORS.map((c) => {
+    const s = stored.get(c.hex)
+    return s ? { ...c, char: s.char, enabled: s.enabled } : { ...c }
+  })
 }
 
 interface Snapshot {
@@ -102,21 +120,31 @@ export const useDisplayStore = defineStore('display', () => {
     { deep: true },
   )
 
-  /** 第一个颜色视为底色（通常是白），橡皮与清空都落到该颜色 */
+  /** 第一个颜色视为底色（白，固定启用），橡皮与清空都落到该颜色 */
   const bgColor = computed(() => palette.value[0]?.hex ?? '#ffffff')
+
+  /** 当前启用的颜色（工具栏色板 / 照片转换均只用启用的颜色） */
+  const activePalette = computed(() => palette.value.filter((c) => c.enabled))
 
   const luminance = (hex: string) => {
     const v = Number.parseInt(hex.slice(1), 16)
     return 0.299 * ((v >> 16) & 255) + 0.587 * ((v >> 8) & 255) + 0.114 * (v & 255)
   }
   const darkestColor = computed(() =>
-    palette.value.reduce(
+    activePalette.value.reduce(
       (min, c) => (luminance(c.hex) < luminance(min.hex) ? c : min),
       palette.value[0] ?? DEFAULT_INK_COLORS[1]!,
     ),
   )
 
   const total = computed(() => width.value * height.value)
+
+  // 当前颜色被取消启用时，回退到黑色（或第一个启用的颜色）
+  watch(activePalette, (list) => {
+    if (!list.some((c) => c.hex === color.value)) {
+      color.value = (list.find((c) => c.hex !== bgColor.value) ?? list[0])?.hex ?? bgColor.value
+    }
+  })
   const filled = computed(() => cells.value.reduce((n, c) => n + (c !== bgColor.value ? 1 : 0), 0))
 
   function setCell(x: number, y: number, hex: string) {
@@ -261,7 +289,9 @@ export const useDisplayStore = defineStore('display', () => {
       {
         width: width.value,
         height: height.value,
-        colors: palette.value.map((c) => ({ name: c.name, hex: c.hex, char: c.char })),
+        colors: palette.value
+          .filter((c) => c.enabled)
+          .map((c) => ({ name: c.name, hex: c.hex, char: c.char })),
         pixels: hexRows.value,
       },
       null,
@@ -540,11 +570,11 @@ export const useDisplayStore = defineStore('display', () => {
     filled,
     tool,
     color,
-    brush,
     shape,
     cursor,
     bgColor,
     palette,
+    activePalette,
     setCell,
     floodFill,
     clear,

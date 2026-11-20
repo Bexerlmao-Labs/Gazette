@@ -92,7 +92,7 @@ function updatePreview() {
     w,
     h,
     options,
-    store.palette.map((c) => c.hex),
+    store.activePalette.map((c) => c.hex),
   )
 }
 
@@ -145,7 +145,7 @@ watch(
     () => options.invert,
     () => store.width,
     () => store.height,
-    () => store.palette.map((c) => c.hex).join(','),
+    () => store.activePalette.map((c) => c.hex).join(','),
   ],
   updatePreview,
 )
@@ -184,8 +184,8 @@ onBeforeUnmount(() => {
     </div>
 
     <p class="note">
-      任意颜色的照片会自动匹配为「墨水屏设置」中配置的颜色 （当前
-      {{ store.palette.map((c) => c.name).join(' / ') }}）
+      任意颜色的照片会自动匹配为「墨水屏设置」中启用的颜色 （当前
+      {{ store.activePalette.map((c) => c.name).join(' / ') }}）
     </p>
 
     <div class="sliders">
