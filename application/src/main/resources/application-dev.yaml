@@ -1,0 +1,13 @@
+spring:
+  config:
+    activate:
+      on-profile: dev
+
+app:
+  # dev 环境不启用蓝牙连接页
+  bluetooth-enabled: false
+
+# dev 下控制台打印 SQL
+mybatis-plus:
+  configuration:
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl

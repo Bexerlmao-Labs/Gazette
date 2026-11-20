@@ -1,6 +1,9 @@
 spring:
   application:
     name: gazette-press
+  profiles:
+    # 默认使用 dev，打包上线时用 --spring.profiles.active=prod 覆盖
+    active: dev
   datasource:
     url: jdbc:postgresql://localhost:5432/gazette
     username: postgres
@@ -12,6 +15,5 @@ server:
 mybatis-plus:
   configuration:
     map-underscore-to-camel-case: true
-    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
   global-config:
     banner: false

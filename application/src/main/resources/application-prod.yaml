@@ -1,0 +1,8 @@
+spring:
+  config:
+    activate:
+      on-profile: prod
+
+app:
+  # prod 环境启用蓝牙连接页
+  bluetooth-enabled: true
