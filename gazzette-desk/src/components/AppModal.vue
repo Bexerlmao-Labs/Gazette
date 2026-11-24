@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ref } from 'vue'
 import PixelIcon from '@/components/PixelIcon.vue'
 
 withDefaults(
@@ -10,11 +11,32 @@ withDefaults(
 )
 
 const emit = defineEmits<{ close: [] }>()
+
+/** 仅当按下与释放都发生在遮罩上时才关闭：避免输入框选中文本拖出弹窗误触发 */
+const downOnOverlay = ref(false)
+
+function onOverlayPointerDown(e: PointerEvent) {
+  downOnOverlay.value = e.target === e.currentTarget
+}
+
+function onOverlayClick(e: MouseEvent) {
+  if (!downOnOverlay.value || e.target !== e.currentTarget) return
+  const sel = window.getSelection()
+  if (sel && sel.toString().length > 0) return
+  downOnOverlay.value = false
+  emit('close')
+}
 </script>
 
 <template>
   <Teleport to="body">
-    <div class="modal" role="dialog" aria-modal="true" @click.self="emit('close')">
+    <div
+      class="modal"
+      role="dialog"
+      aria-modal="true"
+      @pointerdown="onOverlayPointerDown"
+      @click="onOverlayClick"
+    >
       <div class="modal__card">
         <header class="modal__head">
           <div>
