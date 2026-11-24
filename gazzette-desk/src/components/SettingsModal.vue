@@ -103,6 +103,7 @@ function applyPreset(preset: (typeof SCREEN_PRESETS)[number]) {
       <p v-if="!sizeOpen" class="hint">已连接蓝牙时尺寸自动从设备读取，一般无需手动调整</p>
 
       <div v-if="sizeOpen" class="size-body">
+        <span class="size-body__label">固定尺寸预设</span>
         <div class="presets">
           <button
             v-for="preset in SCREEN_PRESETS"
@@ -115,6 +116,7 @@ function applyPreset(preset: (typeof SCREEN_PRESETS)[number]) {
           </button>
         </div>
 
+        <span class="size-body__label">自定义尺寸</span>
         <div class="size">
           <div class="size__box">
             <span class="size__key">W</span>
@@ -274,6 +276,22 @@ function applyPreset(preset: (typeof SCREEN_PRESETS)[number]) {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+.size-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 4px;
+}
+
+.size-body__label {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
 }
 
 .size-toggle {
