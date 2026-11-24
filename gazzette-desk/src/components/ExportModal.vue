@@ -62,8 +62,6 @@ function download() {
         下载文件
       </button>
     </div>
-
-    <p class="hint">每个字符对应一种墨水颜色，占位符可在「墨水屏设置」中自定义。</p>
   </AppModal>
 </template>
 
@@ -95,11 +93,5 @@ function download() {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px;
-}
-
-.hint {
-  color: var(--muted);
-  font-size: 10px;
-  letter-spacing: 0.04em;
 }
 </style>

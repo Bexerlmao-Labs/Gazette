@@ -10,11 +10,6 @@ const showPassword = ref(false)
 
 <template>
   <AppModal title="WiFi 配置" subtitle="WRITE WIFI TO BOARD" @close="store.closeModal()">
-    <p class="hint">
-      此操作通过蓝牙把 WiFi 信息<strong>写入开发板</strong>，由开发板自行联网。网页本身不通过 WiFi
-      连接设备。
-    </p>
-
     <div class="field">
       <label class="label" for="wifi-ssid">WiFi 名称</label>
       <input

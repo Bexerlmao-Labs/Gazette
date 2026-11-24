@@ -100,7 +100,7 @@ function applyPreset(preset: (typeof SCREEN_PRESETS)[number]) {
         <code>{{ store.width }} × {{ store.height }}</code>
         <PixelIcon :name="sizeOpen ? 'close' : 'spark'" :size="12" />
       </button>
-      <p v-if="!sizeOpen" class="hint">已连接蓝牙时尺寸自动从设备读取，一般无需手动调整</p>
+      <p v-if="!sizeOpen" class="hint">蓝牙连接后尺寸自动同步</p>
 
       <div v-if="sizeOpen" class="size-body">
         <span class="size-body__label">固定尺寸预设</span>
@@ -146,7 +146,7 @@ function applyPreset(preset: (typeof SCREEN_PRESETS)[number]) {
             />
           </div>
         </div>
-        <p class="hint">范围 4 – 1024 px，调整后保留左上角画面</p>
+        <p class="hint">4 – 1024 px，保留左上角画面</p>
       </div>
     </div>
   </AppModal>

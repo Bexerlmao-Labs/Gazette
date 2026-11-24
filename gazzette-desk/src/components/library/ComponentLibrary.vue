@@ -20,7 +20,6 @@ function onDragStart(e: DragEvent, comp: LibComponent) {
 <template>
   <aside class="clib">
     <div class="clib__title">组件库</div>
-    <p class="clib__hint">点击组件预览 · 拖拽到画布放置</p>
 
     <div class="clib__group">
       <div class="clib__group-label">内置组件</div>
@@ -29,7 +28,6 @@ function onDragStart(e: DragEvent, comp: LibComponent) {
           v-for="c in builtin"
           :key="c.id"
           class="comp"
-          :title="c.desc"
           draggable="true"
           @dragstart="onDragStart($event, c)"
           @click="emit('preview', c)"
@@ -47,7 +45,6 @@ function onDragStart(e: DragEvent, comp: LibComponent) {
           v-for="c in plugins"
           :key="c.id"
           class="comp"
-          :title="c.desc"
           draggable="true"
           @dragstart="onDragStart($event, c)"
           @click="emit('preview', c)"
@@ -57,10 +54,6 @@ function onDragStart(e: DragEvent, comp: LibComponent) {
         </button>
       </div>
     </div>
-
-    <p class="clib__hint clib__hint--dev">
-      自定义组件由开发者在 src/components/library/plugins.ts 中注册
-    </p>
   </aside>
 </template>
 
@@ -77,17 +70,6 @@ function onDragStart(e: DragEvent, comp: LibComponent) {
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.14em;
-}
-
-.clib__hint {
-  color: var(--muted);
-  font-size: 9px;
-  line-height: 1.7;
-}
-
-.clib__hint--dev {
-  border-top: 1px dashed var(--line);
-  padding-top: 8px;
 }
 
 .clib__group {

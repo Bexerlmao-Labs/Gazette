@@ -40,7 +40,6 @@ const store = useDisplayStore()
 
       <button
         class="btn btn--ghost btn--sm"
-        title="屏幕尺寸、颜色勾选与位图填充符"
         @click="store.openModal('settings')"
       >
         <PixelIcon name="gear" :size="14" />
