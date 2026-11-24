@@ -16,7 +16,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 function json(init?: RequestInit, body?: unknown): RequestInit {
   return {
     ...init,
-    headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
+    headers: { 'Content-Type': 'application/json', ...init?.headers },
     body: body === undefined ? undefined : JSON.stringify(body),
   }
 }
@@ -70,6 +70,17 @@ export function createDevice(device: {
   currentSceneId?: number | null
 }) {
   return request<CloudDevice>('/api/device', json({ method: 'POST' }, device))
+}
+
+/** 蓝牙连接后自动注册：SN 已存在时后端返回非 0，调用方提示只能离线模式 */
+export function registerDevice(device: {
+  sn: string
+  name: string
+  model?: string
+  width?: number
+  height?: number
+}) {
+  return request<CloudDevice>('/api/device/register', json({ method: 'POST' }, device))
 }
 
 export function updateDevice(

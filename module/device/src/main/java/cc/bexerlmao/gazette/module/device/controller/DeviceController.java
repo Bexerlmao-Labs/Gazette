@@ -2,6 +2,7 @@ package cc.bexerlmao.gazette.module.device.controller;
 
 import cc.bexerlmao.gazette.common.web.R;
 import cc.bexerlmao.gazette.module.device.dto.DeviceCreateRequest;
+import cc.bexerlmao.gazette.module.device.dto.DeviceRegisterRequest;
 import cc.bexerlmao.gazette.module.device.dto.DeviceUpdateRequest;
 import cc.bexerlmao.gazette.module.device.entity.Device;
 import cc.bexerlmao.gazette.module.device.service.DeviceService;
@@ -27,6 +28,12 @@ public class DeviceController {
     @PostMapping
     public R<Device> create(@Valid @RequestBody DeviceCreateRequest req) {
         return R.ok(deviceService.create(req));
+    }
+
+    /** 蓝牙连接后自动注册（网页端调用）：SN 已存在时返回 409，前端提示只能离线模式 */
+    @PostMapping("/register")
+    public R<Device> register(@Valid @RequestBody DeviceRegisterRequest req) {
+        return R.ok(deviceService.register(req));
     }
 
     @PutMapping("/{id}")

@@ -2,6 +2,7 @@ package cc.bexerlmao.gazette.module.device.service;
 
 import cc.bexerlmao.gazette.common.web.BizException;
 import cc.bexerlmao.gazette.module.device.dto.DeviceCreateRequest;
+import cc.bexerlmao.gazette.module.device.dto.DeviceRegisterRequest;
 import cc.bexerlmao.gazette.module.device.dto.DeviceUpdateRequest;
 import cc.bexerlmao.gazette.module.device.entity.Device;
 import cc.bexerlmao.gazette.module.device.mapper.DeviceMapper;
@@ -69,6 +70,29 @@ public class DeviceService {
         device.setRotate(0);
         device.setCurrentSceneId(req.getCurrentSceneId());
         device.setStatus(2); // 未激活
+        device.setCreatedAt(LocalDateTime.now());
+        device.setUpdatedAt(LocalDateTime.now());
+        deviceMapper.insert(device);
+        return device;
+    }
+
+    /** 蓝牙连接后的自动注册：SN 已存在则拒绝，提示只能使用离线模式 */
+    @Transactional
+    public Device register(DeviceRegisterRequest req) {
+        Device existing = deviceMapper.selectOne(new LambdaQueryWrapper<Device>()
+                .eq(Device::getDeviceSn, req.getSn()));
+        if (existing != null) {
+            throw new BizException(409, "该设备 SN 已在云端注册，云端画面不可用，仅可使用离线模式（蓝牙推送）");
+        }
+        Device device = new Device();
+        device.setDeviceSn(req.getSn());
+        device.setDeviceKey(HexFormat.of().formatHex(UUID.randomUUID().toString().getBytes()));
+        device.setName(req.getName());
+        device.setModel(req.getModel());
+        device.setWidth(req.getWidth() == null ? 0 : req.getWidth());
+        device.setHeight(req.getHeight() == null ? 0 : req.getHeight());
+        device.setRotate(0);
+        device.setStatus(2); // 未激活，等固件首次轮询拉取后转在线
         device.setCreatedAt(LocalDateTime.now());
         device.setUpdatedAt(LocalDateTime.now());
         deviceMapper.insert(device);
