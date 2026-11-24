@@ -8,13 +8,13 @@ const TOOLS: { key: Tool; label: string; icon: string }[] = [
   { key: 'pen', label: '画笔', icon: 'pen' },
   { key: 'eraser', label: '橡皮', icon: 'eraser' },
   { key: 'rect', label: '矩形', icon: 'rect' },
+  { key: 'line', label: '直线', icon: 'line' },
   { key: 'fill', label: '填充', icon: 'fill' },
-  { key: 'picker', label: '取色', icon: 'picker' },
 ]
 
 function pickColor(hex: string) {
   store.color = hex
-  if (store.tool === 'eraser' || store.tool === 'picker') store.tool = 'pen'
+  if (store.tool === 'eraser') store.tool = 'pen'
 }
 </script>
 
@@ -32,6 +32,28 @@ function pickColor(hex: string) {
         <PixelIcon :name="item.icon" :size="15" />
         <span>{{ item.label }}</span>
       </button>
+    </div>
+
+    <!-- 矩形选项：边框粗细 / 是否填充 -->
+    <div v-if="store.tool === 'rect'" class="tool-opts">
+      <span class="tool-opts__name">
+        <PixelIcon name="rect" :size="13" />
+        矩形选项
+      </span>
+      <label class="tool-opts__item">
+        边框粗细
+        <select v-model.number="store.rectThickness" class="tool-opts__input">
+          <option :value="1">1</option>
+          <option :value="2">2</option>
+          <option :value="3">3</option>
+          <option :value="4">4</option>
+          <option :value="6">6</option>
+        </select>
+      </label>
+      <label class="tool-opts__item tool-opts__item--check">
+        <input v-model="store.rectFilled" type="checkbox" />
+        填充
+      </label>
     </div>
 
     <div class="tools__row tools__row--acts">
@@ -53,10 +75,6 @@ function pickColor(hex: string) {
       <div class="palette__head">
         <span class="label palette__label">墨水颜色</span>
         <code class="palette__code">{{ store.color.toUpperCase() }}</code>
-        <button class="palette__edit" title="屏幕尺寸、颜色勾选与位图填充符" @click="store.openModal('settings')">
-          <PixelIcon name="gear" :size="13" />
-          <span>屏幕设置</span>
-        </button>
       </div>
       <div class="swatches">
         <button
@@ -84,13 +102,63 @@ function pickColor(hex: string) {
 
 .tools__row {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(2, 1fr);
   gap: 8px;
 }
 
 .tools__row--acts {
   display: flex;
   gap: 6px;
+}
+
+.tool-opts {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px dashed var(--line);
+  background: var(--paper);
+}
+
+.tool-opts__name {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--ink-2);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+}
+
+.tool-opts__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+}
+
+.tool-opts__item--check {
+  cursor: pointer;
+}
+
+.tool-opts__item--check input {
+  width: 13px;
+  height: 13px;
+  accent-color: var(--ink);
+  cursor: pointer;
+}
+
+.tool-opts__input {
+  height: 24px;
+  width: 56px;
+  padding: 0 4px;
+  border: 2px solid var(--line);
+  background: var(--paper);
+  font-size: 10px;
 }
 
 .tool {
@@ -148,29 +216,6 @@ function pickColor(hex: string) {
   letter-spacing: 0.1em;
 }
 
-.palette__edit {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  margin-left: auto;
-  height: 26px;
-  padding: 0 8px;
-  border: 2px solid var(--ink);
-  background: var(--paper);
-  color: var(--ink-2);
-  font-size: 9.5px;
-  letter-spacing: 0.08em;
-  cursor: pointer;
-  transition:
-    background 0.12s ease,
-    color 0.12s ease;
-}
-
-.palette__edit:hover {
-  background: var(--ink);
-  color: var(--paper);
-}
-
 .swatches {
   display: flex;
   flex-wrap: wrap;
@@ -198,5 +243,4 @@ function pickColor(hex: string) {
   .tools__row {
     grid-template-columns: repeat(3, 1fr);
   }
-}
-</style>
+}</style>
