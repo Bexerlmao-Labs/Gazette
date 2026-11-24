@@ -15,5 +15,5 @@ app.use(router)
 
 app.mount('#app')
 
-// 预热点阵字库（后端 /api/font），文字组件渲染时直接使用
+// 预热点阵字库（内建 JSON），文字组件渲染时直接使用
 void ensureFontLoaded()

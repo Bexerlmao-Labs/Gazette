@@ -1,12 +1,17 @@
 /**
- * 点阵字库：从后端 /api/font 加载（module/device resources/font/pixel-font.json），
- * 前端文字组件用点阵渲染，不再依赖浏览器字体栅格化。
+ * 点阵字库：前后端同源双份，格式一致（tools/fontgen_bdf.py 从
+ * 「缝合像素字体 Fusion Pixel」BDF 原厂位图转换生成，SIL OFL 1.1）。
+ * - 前端内置副本（src/assets/pixel-font.json）：启动即可用，绘制不依赖后端；
+ * - 后端 /api/font（module/device resources/font）：服务端渲染动态内容的唯一真源；
+ * - ensureFontLoaded 会尝试拉取后端字库，成功后覆盖前端副本并触发重绘，
+ *   两份文件由同一脚本生成，内容一致；拉取失败时继续用内置副本。
  *
- * 字库结构：{ size: 16, glyphs: { "室": ["....", ...16 行], "A": [...10 宽] } }
- * - CJK 全角 16×16、ASCII 半角 10×16，行高统一 16 点；
- * - 字库未加载或字符缺失时，回退为浏览器超采样栅格（内存缓存）；
- * - 渲染时按 组件框高度/16 缩放，框放大文字随之放大。
+ * 字库结构：{ size: 16, glyphs: { "室": ["....", ...16 行], "A": [...7 宽] } }
+ * - 字形为点阵字体原厂位图，基线对齐放在 16 行网格内，栅格干净，缩放不糊；
+ * - 字符缺失时，回退为浏览器超采样栅格（内存缓存）。
  */
+
+import { default as bundledFont } from '@/assets/pixel-font.json'
 
 export interface FontData {
   size: number
@@ -15,27 +20,43 @@ export interface FontData {
 
 export const GLYPH_HEIGHT = 16
 
-let fontData: FontData | null = null
-let fontPromise: Promise<FontData | null> | null = null
+let fontData: FontData | null = bundledFont
+let backendSynced = false
+let syncPromise: Promise<FontData | null> | null = null
+const loadedCallbacks: Array<() => void> = []
 
-/** 应用启动时预热；失败时静默回退到浏览器栅格 */
+/** 字库就绪/更新后触发的回调（用于触发画布/导出数据重算） */
+export function onFontLoaded(cb: () => void) {
+  loadedCallbacks.push(cb)
+}
+
+function replaceFont(next: FontData) {
+  const changed = fontData !== next
+  fontData = next
+  if (changed) for (const cb of loadedCallbacks) cb()
+}
+
+/** 与后端字库同步：成功则以后端为准覆盖内置副本，失败则继续用内置副本 */
 export function ensureFontLoaded(): Promise<FontData | null> {
-  if (fontData) return Promise.resolve(fontData)
-  if (!fontPromise) {
-    fontPromise = fetch('/api/font')
+  if (backendSynced) return Promise.resolve(fontData)
+  if (!syncPromise) {
+    syncPromise = fetch('/api/font')
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
       .then((d: FontData) => {
         if (d && d.glyphs && Object.keys(d.glyphs).length > 0) {
-          fontData = d
+          backendSynced = true
+          replaceFont(d)
         }
         return fontData
       })
-      .catch(() => null)
+      .catch(() => {
+        syncPromise = null // 后端不可用时下次调用重试
+        return fontData
+      })
   }
-  return fontPromise
+  return syncPromise
 }
 
-/** 字库缺失字符的浏览器栅格兜底（128px 超采样 → 16×16） */
 const fallbackCache = new Map<string, string[]>()
 
 function rasterFallback(ch: string): string[] {
@@ -91,7 +112,7 @@ export function glyphOf(ch: string): string[] | null {
 export interface TextBuffer {
   /** 行宽（点数） */
   width: number
-  /** 行高（恒为 GLYPH_HEIGHT） */
+  /** 行高（字库行高，可能小于 GLYPH_HEIGHT） */
   height: number
   /** '#'/'.' 组成的行文本 */
   rows: string[]
@@ -110,5 +131,12 @@ export function textToBuffer(text: string): TextBuffer {
     }
     width += gw + 1 // 字形 + 1 点间距
   }
-  return { width, height: GLYPH_HEIGHT, rows: lines }
+  if (!width) return { width: 0, height: 0, rows: [] }
+  // 裁掉上下全空行，让文字充满组件框（避免字库行高空隙导致缩放偏小）
+  let top = 0
+  let bottom = lines.length - 1
+  while (top < bottom && !lines[top].includes('#')) top++
+  while (bottom > top && !lines[bottom].includes('#')) bottom--
+  const rows = lines.slice(top, bottom + 1)
+  return { width, height: rows.length, rows }
 }
