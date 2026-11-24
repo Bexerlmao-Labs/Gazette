@@ -3,6 +3,10 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import AppModal from '@/components/AppModal.vue'
 import PixelIcon from '@/components/PixelIcon.vue'
 import { useDisplayStore } from '@/stores/display'
+import { useTokenUsageStore, type TokenProvider } from '@/stores/token-usage'
+
+/** 组件依赖的数据源标识：glm / deepseek / ai（融合，两家都要） */
+type ProviderId = TokenProvider | 'ai'
 import { ensureFontLoaded } from './font'
 import { placeComponent, renderToCells, textContentSize, type LibComponent } from './library'
 
@@ -10,6 +14,7 @@ const props = defineProps<{ comp: LibComponent }>()
 const emit = defineEmits<{ close: [] }>()
 
 const store = useDisplayStore()
+const tokenStore = useTokenUsageStore()
 const canvasRef = ref<HTMLCanvasElement | null>(null)
 
 /** 本地可编辑副本：直接改内容不影响组件库定义 */
@@ -21,6 +26,18 @@ const editable = reactive<LibComponent>({
 const isText = computed(() => editable.kind === 'text')
 const isDatetime = computed(() => editable.kind === 'datetime')
 const isQr = computed(() => editable.kind === 'qr')
+const isChart = computed(() => editable.kind === 'chart')
+const isPie = computed(() => editable.kind === 'pie')
+
+/* AI 用量组件：检查数据源是否已配置；未配置引导去「数据源设置」 */
+const isTokenComp = computed(() => !!editable.needsApiKey)
+const provider = computed<ProviderId>(() => (editable.attrs.provider as ProviderId) || 'ai')
+const providerReady = computed(() => tokenStore.isReady(provider.value))
+
+function openDataSource() {
+  emit('close')
+  store.openModal('datasource')
+}
 
 /** 文本/时间内容变化时按内容自适应尺寸（避免点阵被降采样发糊） */
 function fitContentSize() {
@@ -68,6 +85,7 @@ function placeCenter() {
 }
 
 onMounted(() => {
+  void tokenStore.loadStatus()
   fitContentSize()
   draw()
   // 字库异步加载完成后重绘（文字点阵来自后端字库）
@@ -79,7 +97,16 @@ onMounted(() => {
   })
 })
 watch(
-  () => [editable.template, editable.attrs.format, editable.w, editable.h, editable.id],
+  () => [
+    editable.template,
+    editable.attrs.format,
+    editable.attrs.title,
+    editable.attrs['x-label'],
+    editable.attrs['y-label'],
+    editable.w,
+    editable.h,
+    editable.id,
+  ],
   () => draw(),
   { flush: 'post' },
 )
@@ -96,7 +123,7 @@ watch(
         <canvas ref="canvasRef" />
       </div>
       <div v-if="isText" class="field">
-        <label class="label" for="pv-text">内容</label>
+        <label class="label" for="pv-text">内容（支持 {变量}，画布展示虚拟示例）</label>
         <input
           id="pv-text"
           v-model="editable.template"
@@ -125,6 +152,44 @@ watch(
           spellcheck="false"
         />
       </div>
+
+      <!-- 图表：标题/轴含义（标题可更改，写入 attrs.title，云端渲染时一并绘制） -->
+      <template v-if="isChart || isPie">
+        <div class="field">
+          <label class="label" for="pv-title">标题</label>
+          <input id="pv-title" v-model="editable.attrs.title" class="input" placeholder="图表标题" />
+        </div>
+        <div v-if="isChart" class="field-pair">
+          <div class="field">
+            <label class="label" for="pv-xlabel">X 轴含义</label>
+            <input id="pv-xlabel" v-model="editable.attrs['x-label']" class="input" placeholder="如：月份" />
+          </div>
+          <div class="field">
+            <label class="label" for="pv-ylabel">Y 轴含义</label>
+            <input id="pv-ylabel" v-model="editable.attrs['y-label']" class="input" placeholder="如：tokens" />
+          </div>
+        </div>
+        <p class="hint">
+          图表同时支持 x-ticks 横轴刻度（指向 *_labels 变量）、图例（legend=1）；
+          数据不足 points 槽位时左对齐留白，空缺月份自动填 0。
+        </p>
+      </template>
+
+      <!-- AI 用量组件：按需引导配置数据源 -->
+      <div v-if="isTokenComp" class="field">
+        <div v-if="!providerReady" class="token-warn">
+          ⚠️ 尚未配置所需数据源（{{ provider === 'ai' ? 'GLM + DeepSeek' : tokenStore.providerLabel(provider) }}），
+          设备端将无法获取真实用量。
+        </div>
+        <div v-else class="token-ok">✓ 数据源已配置，设备端将拉取真实用量（画布展示虚拟示例）</div>
+        <div class="pv__actions">
+          <button class="btn btn--primary" @click="openDataSource">
+            <PixelIcon name="code" :size="14" />
+            {{ providerReady ? '数据源设置' : '去配置数据源' }}
+          </button>
+        </div>
+      </div>
+
       <div class="pv__actions">
         <button class="btn btn--primary" @click="placeCenter">
           <PixelIcon name="send" :size="14" />
@@ -163,11 +228,41 @@ watch(
   gap: 8px;
 }
 
+.field-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
 .label {
   color: var(--ink-2);
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.1em;
+}
+
+.hint {
+  color: var(--muted);
+  font-size: 9.5px;
+  letter-spacing: 0.04em;
+  line-height: 1.5;
+}
+
+.token-warn {
+  padding: 8px 10px;
+  border: 2px solid var(--accent);
+  color: var(--accent);
+  font-size: 9.5px;
+  line-height: 1.6;
+  letter-spacing: 0.04em;
+}
+
+.token-ok {
+  padding: 8px 10px;
+  border: 1px solid var(--ink);
+  color: var(--ink-2);
+  font-size: 9.5px;
+  letter-spacing: 0.04em;
 }
 
 .pv__actions {

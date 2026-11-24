@@ -1,11 +1,16 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import PixelIcon from '@/components/PixelIcon.vue'
 import PixelCanvas from '@/components/PixelCanvas.vue'
 import { fitPlacedText } from '@/components/library/library'
 import { useDisplayStore } from '@/stores/display'
+import { useTokenUsageStore, type TokenProvider } from '@/stores/token-usage'
+
+/** 组件依赖的数据源标识：glm / deepseek / ai（融合，两家都要） */
+type ProviderId = TokenProvider | 'ai'
 
 const store = useDisplayStore()
+const tokenStore = useTokenUsageStore()
 
 const TOOL_LABEL: Record<string, string> = {
   pen: '画笔',
@@ -27,10 +32,28 @@ const hasTextField = computed(
   () => selectedPlaced.value?.comp.kind === 'text' || selectedPlaced.value?.comp.kind === 'qr',
 )
 const isDatetime = computed(() => selectedPlaced.value?.comp.kind === 'datetime')
+/** 图表/饼图：标题可编辑（写入 attrs.title，云端渲染时一并绘制） */
+const hasTitleField = computed(
+  () =>
+    (selectedPlaced.value?.comp.kind === 'chart' || selectedPlaced.value?.comp.kind === 'pie') &&
+    selectedPlaced.value?.comp.attrs.title !== undefined,
+)
 
 const TEXT_PLACEHOLDER: Record<string, string> = {
   text: '输入文本',
   qr: '输入二维码链接',
+}
+
+/** AI 用量组件：未配置数据源时显示去配置入口 */
+const tokenProvider = computed<ProviderId>(
+  () => (selectedPlaced.value?.comp.attrs.provider as ProviderId) || 'ai',
+)
+const isTokenComp = computed(() => !!selectedPlaced.value?.comp.needsApiKey)
+const providerReady = computed(() => tokenStore.isReady(tokenProvider.value))
+
+function openDataSource() {
+  store.selectPlaced(null)
+  store.openModal('datasource')
 }
 
 /** 文本/时间内容变长时自动扩大组件框，避免点阵被降采样发糊 */
@@ -45,7 +68,7 @@ function removeSelected() {
 
 <template>
   <div class="cpanel">
-    <!-- 选中放置组件：文本编辑条（画布上方，顶栏之下） -->
+    <!-- 选中放置组件：编辑条（画布上方，顶栏之下） -->
     <div v-if="selectedPlaced" class="placed-editor">
       <span class="placed-editor__name">
         <PixelIcon :name="selectedPlaced.comp.icon" :size="12" />
@@ -65,6 +88,21 @@ function removeSelected() {
         placeholder="%H:%M"
         @input="fitSelected"
       />
+      <input
+        v-else-if="hasTitleField"
+        v-model="selectedPlaced.comp.attrs.title"
+        class="input placed-editor__input"
+        placeholder="图表标题"
+      />
+      <button
+        v-if="isTokenComp && !providerReady"
+        class="btn btn--sm btn--warn"
+        :title="`配置 ${tokenProvider === 'ai' ? 'GLM + DeepSeek' : tokenStore.providerLabel(tokenProvider)} 数据源`"
+        @click="openDataSource"
+      >
+        <PixelIcon name="code" :size="12" />
+        去配置数据源
+      </button>
       <button class="btn btn--ghost btn--sm" @click="removeSelected">
         <PixelIcon name="trash" :size="12" />
       </button>
@@ -120,6 +158,11 @@ function removeSelected() {
 .placed-editor__input--short {
   flex: none;
   width: 120px;
+}
+
+.btn--warn {
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 .statusbar {

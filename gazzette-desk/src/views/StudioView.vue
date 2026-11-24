@@ -3,6 +3,7 @@ import { RouterView } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
 import ExportModal from '@/components/ExportModal.vue'
 import SettingsModal from '@/components/SettingsModal.vue'
+import DataSourceModal from '@/components/DataSourceModal.vue'
 import WifiModal from '@/components/WifiModal.vue'
 import { useDisplayStore } from '@/stores/display'
 
@@ -20,6 +21,7 @@ const store = useDisplayStore()
   <WifiModal v-if="store.activeModal === 'wifi'" />
   <ExportModal v-if="store.activeModal === 'export'" />
   <SettingsModal v-if="store.activeModal === 'settings'" />
+  <DataSourceModal v-if="store.activeModal === 'datasource'" />
 </template>
 
 <style scoped>

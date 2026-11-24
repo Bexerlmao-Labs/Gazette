@@ -6,7 +6,7 @@ import { onFontLoaded } from '@/components/library/font'
 
 export type Tool = 'pen' | 'eraser' | 'fill' | 'rect' | 'line'
 export type PixelShape = 'square' | 'round'
-export type ModalName = 'wifi' | 'export' | 'settings' | null
+export type ModalName = 'wifi' | 'export' | 'settings' | 'datasource' | null
 
 export interface InkColor {
   hex: string

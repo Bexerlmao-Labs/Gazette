@@ -46,6 +46,11 @@ const store = useDisplayStore()
         屏幕设置
       </button>
 
+      <button class="btn btn--ghost btn--sm" @click="store.openModal('datasource')">
+        <PixelIcon name="code" :size="14" />
+        数据源
+      </button>
+
       <button class="btn btn--ghost btn--sm" @click="store.openModal('wifi')">
         <PixelIcon name="wifi" :size="14" />
         WiFi 配置
