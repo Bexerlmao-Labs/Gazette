@@ -12,7 +12,7 @@ import java.nio.charset.StandardCharsets;
 /**
  * 点阵字库接口：前端画布组件的文字渲染从后端调用字库，
  * 字库文件位于 module/device/src/main/resources/font/pixel-font.json
- * （由 tools/FontGen.java 离线栅格化生成：CJK 16×16、ASCII 10×16）。
+ * （由 tools/fontgen_bdf.py 从开源「缝合像素字体 Fusion Pixel」BDF 原厂位图转换，SIL OFL 1.1，见 OFL-fusion-pixel.txt）。
  */
 @RestController
 @RequestMapping("/api")

@@ -14,13 +14,11 @@ import java.util.LinkedHashSet;
 import java.util.Set;
 
 /**
- * 点阵字库生成工具（一次性运行，产物提交到 module/device/src/main/resources/font/pixel-font.json）。
+ * 【已被 tools/fontgen_bdf.py 取代】旧版栅格化生成器，仅保留 charset 字符集文本块
+ * 作为 fontgen_bdf.py 的字符集来源（转换「缝合像素字体 Fusion Pixel」BDF 原厂位图）。
  *
- * 输出 JSON：{ "size": 16, "glyphs": { "室": ["....", ...16 行], "A": [...10 宽 16 行] } }
- * - CJK / 全角：16×16 点阵
- * - ASCII 半角：10×16 点阵（等宽）
- *
- * 每个字形先用 96px 高清渲染（抗锯齿），再按块平均亮度阈值降采样为点阵。
+ * 若需调整字库覆盖的字符，直接编辑下方 charset 文本块后运行：
+ *   python tools/fontgen_bdf.py <bdf路径>
  */
 public final class FontGen {
 
