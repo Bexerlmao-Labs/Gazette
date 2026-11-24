@@ -17,6 +17,7 @@ import java.security.MessageDigest;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -329,7 +330,12 @@ public class SceneRenderService {
 
     /**
      * 图表（折线/柱状）。序列数据点来自数据集数组：
-     * chart x,y,w,h type=line series=a,b [y-min=] [y-max=] [legend=1] [points=24]
+     * chart x,y,w,h type=line series=a,b [title=] [x-label=] [y-label=] [x-ticks=变量]
+     *   [y-min=] [y-max=] [legend=1] [points=24]
+     *
+     * - title/x-label/y-label 支持 {变量}；标题顶部居中，x-label 在底部（无刻度时）
+     * - x-ticks 指向数据集字符串数组变量，作为横轴刻度（最多取 4 个均匀标注）
+     * - points=N 时按 N 个槽位布局：数据不足 N 时左对齐、右侧留白（空缺月份等场景）
      */
     private void drawChart(Graphics2D g, DslElement el, Map<String, Object> data) {
         if (el.getW() == null || el.getH() == null) {
@@ -361,6 +367,13 @@ public class SceneRenderService {
         if (min == Double.POSITIVE_INFINITY) {
             return;
         }
+
+        String type = el.attr("type", "line");
+        if ("pie".equals(type)) {
+            drawPie(g, el, series);
+            return;
+        }
+
         double yMin = el.attr("y-min") != null ? Double.parseDouble(el.attr("y-min")) : min;
         double yMax = el.attr("y-max") != null ? Double.parseDouble(el.attr("y-max")) : max;
         if (yMax - yMin < 1e-9) {
@@ -370,27 +383,51 @@ public class SceneRenderService {
         int x = el.x(), y = el.y(), w = el.getW(), h = el.getH();
         g.setColor(BLACK);
         g.setStroke(new BasicStroke(1));
+
+        // 文字区域：标题（顶部）/ 横轴刻度与标签（底部）
+        Font small = new Font("SansSerif", Font.PLAIN, 10);
+        Font titleFont = new Font("SansSerif", Font.BOLD, 12);
+        String title = resolveText(el.attr("title"), data);
+        String xLabel = resolveText(el.attr("x-label"), data);
+        String yLabel = resolveText(el.attr("y-label"), data);
+        String[] xTicks = readLabels(data, el.attr("x-ticks"));
+        int topBand = title != null ? 16 : 0;
+        int bottomBand = xTicks.length > 0 || xLabel != null ? 13 : 0;
+
         g.drawRect(x, y, w, h); // 外框
+        int plotTop = y + 1 + topBand;
+        int plotBottom = y + h - 1 - bottomBand;
+        int plotH = Math.max(2, plotBottom - plotTop);
+        int plotW = w - 2;
 
-        String type = el.attr("type", "line");
+        if (title != null) { // 标题：顶部居中
+            g.setFont(titleFont);
+            FontMetrics fm = g.getFontMetrics();
+            g.drawString(title, x + Math.max(0, (w - fm.stringWidth(title)) / 2), y + topBand - 4);
+        }
+        if (yLabel != null) { // 纵轴含义：绘图区左上角
+            g.setFont(small);
+            g.drawString(yLabel, x + 3, plotTop + 10);
+        }
+
         int count = series.values().iterator().next().length;
-        int plotW = w - 2, plotH = h - 2;
-
+        // points=N 槽位布局：数据不足时左对齐、右侧留白
+        int slots = points > 0 ? Math.max(points, count) : count;
         int[] xs = new int[count];
         for (int i = 0; i < count; i++) {
-            xs[i] = count == 1 ? x + 1 : x + 1 + i * plotW / (count - 1);
+            xs[i] = slots <= 1 ? x + 1 : x + 1 + Math.round(i * (float) (plotW - 1) / (slots - 1));
         }
         int[] ys = new int[count];
         for (Map.Entry<String, double[]> se : series.entrySet()) {
             double[] values = se.getValue();
             for (int i = 0; i < values.length; i++) {
-                ys[i] = y + 1 + (int) Math.round((yMax - values[i]) / (yMax - yMin) * (plotH - 1));
+                ys[i] = plotTop + (int) Math.round((yMax - values[i]) / (yMax - yMin) * (plotH - 1));
             }
             if ("bar".equals(type)) {
-                int barW = Math.max(1, plotW / Math.max(count, 1) - 1);
+                int barW = Math.max(1, plotW / Math.max(slots, 1) - 1);
                 for (int i = 0; i < values.length; i++) {
-                    int bx = count == 1 ? x + 1 : x + 1 + i * plotW / count;
-                    int bh = y + h - 1 - ys[i];
+                    int bx = slots == 1 ? x + 1 : x + 1 + i * plotW / slots;
+                    int bh = plotBottom - ys[i];
                     g.fillRect(bx, ys[i], barW, Math.max(bh, 0));
                 }
             } else {
@@ -401,6 +438,30 @@ public class SceneRenderService {
                     g.fillRect(xs[i] - 1, ys[i] - 1, 2, 2);
                 }
             }
+        }
+
+        // 纵轴刻度：右上 y-max、右下 y-min（紧凑数字）
+        g.setFont(small);
+        FontMetrics sfm = g.getFontMetrics();
+        String yMaxS = compact(yMax);
+        String yMinS = compact(yMin);
+        g.drawString(yMaxS, x + w - 2 - sfm.stringWidth(yMaxS), plotTop + sfm.getAscent() + 1);
+        g.drawString(yMinS, x + w - 2 - sfm.stringWidth(yMinS), plotBottom - 2);
+
+        // 横轴：优先刻度标签（均匀取样），否则显示轴含义
+        if (xTicks.length > 0) {
+            int ticks = Math.min(4, xTicks.length);
+            for (int t = 0; t < ticks; t++) {
+                int idx = Math.round(t * (float) (Math.min(count, xTicks.length) - 1) / Math.max(ticks - 1, 1));
+                if (idx >= count) {
+                    continue;
+                }
+                String label = xTicks[idx];
+                int lx = Math.max(x + 1, Math.min(xs[idx] - sfm.stringWidth(label) / 2, x + w - sfm.stringWidth(label) - 1));
+                g.drawString(label, lx, y + h - 3);
+            }
+        } else if (xLabel != null) {
+            g.drawString(xLabel, x + w - 2 - sfm.stringWidth(xLabel), y + h - 3);
         }
 
         if ("1".equals(el.attr("legend", "0"))) {
@@ -419,7 +480,83 @@ public class SceneRenderService {
         }
     }
 
+    /**
+     * 饼图（type=pie）：所有序列点按总和占比画扇区，1bpp 下用 2° 白色间隔区分相邻扇区。
+     * 占比 ≥12% 的扇区标注百分比；数据全为 0/空缺时画外圈 + "无数据"提示。
+     * chart x,y,w,h type=pie series=a,b
+     */
+    private void drawPie(Graphics2D g, DslElement el, Map<String, double[]> series) {
+        double total = 0;
+        List<Double> values = new ArrayList<>();
+        for (double[] s : series.values()) {
+            for (double v : s) {
+                if (v > 0) {
+                    values.add(v);
+                    total += v;
+                }
+            }
+        }
+        int cx = el.x() + el.getW() / 2;
+        int cy = el.y() + el.getH() / 2;
+        int r = Math.max(2, Math.min(el.getW(), el.getH()) / 2 - 1);
+        g.setColor(BLACK);
+        g.drawOval(cx - r, cy - r, r * 2, r * 2);
+        if (total <= 0 || values.isEmpty()) {
+            // 空缺/全零：外圈 + 提示，而不是整块消失
+            g.setFont(new Font("SansSerif", Font.PLAIN, 10));
+            FontMetrics fm = g.getFontMetrics();
+            String tip = "无数据";
+            g.drawString(tip, cx - fm.stringWidth(tip) / 2, cy + fm.getAscent() / 2);
+            return;
+        }
+        g.setFont(new Font("SansSerif", Font.PLAIN, 10));
+        FontMetrics fm = g.getFontMetrics();
+        double angle = 0;
+        for (double v : values) {
+            double sweep = v / total * 360;
+            int startDeg = (int) Math.round(angle);
+            int sweepDeg = (int) Math.round(sweep);
+            if (sweepDeg >= 3) {
+                // 留间隔区分扇区
+                g.fillArc(cx - r, cy - r, r * 2, r * 2, startDeg + 1, sweepDeg - 2);
+            }
+            double pct = v / total;
+            if (pct >= 0.12) { // 大扇区标注百分比
+                double mid = Math.toRadians(angle + sweep / 2);
+                int px = cx + (int) Math.round(Math.cos(mid) * r * 0.55);
+                int py = cy - (int) Math.round(Math.sin(mid) * r * 0.55);
+                String label = Math.round(pct * 100) + "%";
+                g.drawString(label, px - fm.stringWidth(label) / 2, py + fm.getAscent() / 2);
+            }
+            angle += sweep;
+        }
+    }
+
     /* ------------------------------------------------------------ 工具 */
+
+    /** 读取数据集中的标签数组（x-ticks=变量路径 → ["2025-01", ...]） */
+    private String[] readLabels(Map<String, Object> data, String path) {
+        if (path == null || path.isBlank()) {
+            return new String[0];
+        }
+        Object v = lookup(data, path.trim());
+        if (v instanceof List<?> list) {
+            return list.stream().map(String::valueOf).toArray(String[]::new);
+        }
+        return new String[0];
+    }
+
+    /** 紧凑数字：1234567 → 1.2M，12345 → 12.3k，其余取整 */
+    private String compact(double v) {
+        double a = Math.abs(v);
+        if (a >= 1_000_000) {
+            return String.format("%.1fM", v / 1_000_000);
+        }
+        if (a >= 1_000) {
+            return String.format("%.1fk", v / 1_000);
+        }
+        return String.valueOf(Math.round(v));
+    }
 
     /** 点分路径取值：weather.temp → data.get("weather").get("temp") */
     @SuppressWarnings("unchecked")
