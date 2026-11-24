@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useDisplayStore } from '@/stores/display'
-import { commitPlaced, getLibComponent, placeComponent, placedPattern, type PlacedComponent } from '@/components/library/library'
+import { getLibComponent, placeComponent, placedPattern, textContentSize, type PlacedComponent } from '@/components/library/library'
 
 const store = useDisplayStore()
 
@@ -26,13 +26,15 @@ const linePreview = ref<{ x: number; y: number }[] | null>(null)
 /** 放置组件交互态 */
 let moveState: { uid: string; startPX: number; startPY: number; origX: number; origY: number } | null = null
 let resizeState: { uid: string; startPX: number; startPY: number; origW: number; origH: number } | null = null
-let lastClick: { uid: string | null; t: number } = { uid: null, t: 0 }
 
 const BOARD_BG = '#1b1b18'
 const DOT_COLOR = '#33322b'
-const ACCENT = '#df5430'
-/** 选中框 / 手柄颜色，与像素风主题一致 */
-const HANDLE_CELLS = 3
+/** 选中框/手柄颜色：中性纸白，不占用墨水屏颜色语义 */
+const SEL_COLOR = '#f4efe3'
+const SEL_DIM = 'rgba(244, 239, 227, 0.45)'
+/** 缩放手柄尺寸：格子太小时（400×300 大屏 cell≈2px）保证可点的像素面积 */
+const HANDLE_MIN_PX = 10
+const handleCells = () => Math.max(3, Math.ceil(HANDLE_MIN_PX / cell))
 
 const cursorStyle = computed(() => {
   if (!hover.value) return {}
@@ -146,13 +148,13 @@ function drawPlaced() {
     }
     const selected = store.selectedPlacedUid === pc.uid
     ctx.setLineDash([4, 3])
-    ctx.strokeStyle = selected ? ACCENT : 'rgba(223, 84, 48, 0.5)'
+    ctx.strokeStyle = selected ? SEL_COLOR : SEL_DIM
     ctx.strokeRect(pc.x * cell + 0.5, pc.y * cell + 0.5, pc.w * cell - 1, pc.h * cell - 1)
     ctx.setLineDash([])
     if (selected) {
       // 右下角缩放手柄
-      const hs = HANDLE_CELLS * cell
-      ctx.fillStyle = ACCENT
+      const hs = handleCells() * cell
+      ctx.fillStyle = SEL_COLOR
       ctx.fillRect((pc.x + pc.w) * cell - hs, (pc.y + pc.h) * cell - hs, hs, hs)
     }
   }
@@ -164,7 +166,7 @@ function hitPlaced(point: { x: number; y: number }) {
     const pc = list[i]
     if (point.x < pc.x || point.x >= pc.x + pc.w || point.y < pc.y || point.y >= pc.y + pc.h) continue
     const onHandle =
-      point.x >= pc.x + pc.w - HANDLE_CELLS && point.y >= pc.y + pc.h - HANDLE_CELLS
+      point.x >= pc.x + pc.w - handleCells() && point.y >= pc.y + pc.h - handleCells()
     return { pc, onHandle }
   }
   return null
@@ -229,11 +231,19 @@ function pickCell(event: PointerEvent) {
 
 function applyBrush(x: number, y: number) {
   const color = store.tool === 'eraser' ? '' : store.color
-  const idx = y * store.width + x
-  if (store.cells[idx] === color) return
-  store.setCell(x, y, color)
-  // 增量绘制：只画变了的这一格
-  drawCell(x, y)
+  const t = Math.max(1, Math.min(6, store.brushThickness))
+  for (let oy = 0; oy < t; oy++) {
+    for (let ox = 0; ox < t; ox++) {
+      const px = x + ox
+      const py = y + oy
+      if (px >= store.width || py >= store.height) continue
+      const idx = py * store.width + px
+      if (store.cells[idx] === color) continue
+      store.setCell(px, py, color)
+      // 增量绘制：只画变了的这一格
+      drawCell(px, py)
+    }
+  }
 }
 
 /** 矩形像素：填充=实心；否则描边（粗细 thickness，格子太小时退化为实心） */
@@ -327,17 +337,10 @@ function onPointerDown(event: PointerEvent) {
   hover.value = point
   store.cursor = point
 
-  // 放置组件优先：命中则选中并进入移动/缩放；双击落定为像素
+  // 放置组件优先：命中则选中并进入移动/缩放，图层随时可拖拽，无需落定
   const hit = hitPlaced(point)
-  const now = performance.now()
   if (hit) {
     store.selectPlaced(hit.pc.uid)
-    if (lastClick.uid === hit.pc.uid && now - lastClick.t < 350) {
-      commitPlaced(hit.pc)
-      lastClick = { uid: null, t: 0 }
-      return
-    }
-    lastClick = { uid: hit.pc.uid, t: now }
     if (hit.onHandle) {
       resizeState = { uid: hit.pc.uid, startPX: point.x, startPY: point.y, origW: hit.pc.w, origH: hit.pc.h }
     } else {
@@ -345,7 +348,6 @@ function onPointerDown(event: PointerEvent) {
     }
     return
   }
-  lastClick = { uid: null, t: 0 }
 
   store.pushUndo()
 
@@ -402,9 +404,21 @@ function processMove() {
   if (resizeState) {
     const pc = store.placedComponents.find((p) => p.uid === resizeState!.uid)
     if (pc) {
-      const nw = Math.max(4, Math.min(resizeState.origW + point.x - resizeState.startPX, store.width - pc.x))
-      const nh = Math.max(2, Math.min(resizeState.origH + point.y - resizeState.startPY, store.height - pc.y))
-      store.updatePlaced(pc.uid, { w: nw, h: nh })
+      if (pc.comp.kind === 'text' || pc.comp.kind === 'datetime') {
+        // 文本类：拖拽过程中实时等比缩放（整数倍），强制不低于 1x 最小尺寸
+        const size = textContentSize(pc.comp)
+        if (size) {
+          const sw = (resizeState.origW + point.x - resizeState.startPX - 2) / size.w
+          const sh = (resizeState.origH + point.y - resizeState.startPY - 2) / size.h
+          const s = Math.max(1, Math.floor(Math.max(sw, sh)))
+          pc.w = Math.min(size.w * s + 2, store.width - pc.x)
+          pc.h = Math.min(size.h * s + 2, store.height - pc.y)
+        }
+      } else {
+        const nw = Math.max(4, Math.min(resizeState.origW + point.x - resizeState.startPX, store.width - pc.x))
+        const nh = Math.max(2, Math.min(resizeState.origH + point.y - resizeState.startPY, store.height - pc.y))
+        store.updatePlaced(pc.uid, { w: nw, h: nh })
+      }
     }
     return
   }
@@ -516,18 +530,14 @@ function handleWindowResize() {
   layout()
 }
 
-/** 键盘：Delete 删除选中放置组件，Enter 落定，Esc 取消选中 */
+/** 键盘：Delete 删除选中放置组件，Esc 取消选中 */
 function onKeyDown(e: KeyboardEvent) {
   const t = e.target as HTMLElement | null
   if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT')) return
   const uid = store.selectedPlacedUid
   if (!uid) return
-  const pc = store.placedComponents.find((p) => p.uid === uid)
-  if (!pc) return
   if (e.key === 'Delete' || e.key === 'Backspace') {
     store.removePlaced(uid)
-  } else if (e.key === 'Enter') {
-    commitPlaced(pc)
   } else if (e.key === 'Escape') {
     store.selectPlaced(null)
   } else {
@@ -635,6 +645,7 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   padding: 12px;
+  overflow: auto;
 }
 
 .board__stage {

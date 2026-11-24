@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import PixelIcon from '@/components/PixelIcon.vue'
 import PixelCanvas from '@/components/PixelCanvas.vue'
-import { commitPlaced } from '@/components/library/library'
+import { fitPlacedText } from '@/components/library/library'
 import { useDisplayStore } from '@/stores/display'
 
 const store = useDisplayStore()
@@ -29,12 +29,13 @@ const hasTextField = computed(
 const isDatetime = computed(() => selectedPlaced.value?.comp.kind === 'datetime')
 
 const TEXT_PLACEHOLDER: Record<string, string> = {
-  text: '输入文本，支持 {变量}',
+  text: '输入文本',
   qr: '输入二维码链接',
 }
 
-function commitSelected() {
-  if (selectedPlaced.value) commitPlaced(selectedPlaced.value)
+/** 文本/时间内容变长时自动扩大组件框，避免点阵被降采样发糊 */
+function fitSelected() {
+  if (selectedPlaced.value) fitPlacedText(selectedPlaced.value)
 }
 
 function removeSelected() {
@@ -44,9 +45,7 @@ function removeSelected() {
 
 <template>
   <div class="cpanel">
-    <PixelCanvas />
-
-    <!-- 选中放置组件：编辑文本 / 落定 / 删除 -->
+    <!-- 选中放置组件：文本编辑条（画布上方，顶栏之下） -->
     <div v-if="selectedPlaced" class="placed-editor">
       <span class="placed-editor__name">
         <PixelIcon :name="selectedPlaced.comp.icon" :size="12" />
@@ -57,24 +56,21 @@ function removeSelected() {
         v-model="selectedPlaced.comp.template"
         class="input placed-editor__input"
         :placeholder="TEXT_PLACEHOLDER[selectedPlaced.comp.kind]"
+        @input="fitSelected"
       />
       <input
         v-else-if="isDatetime"
         v-model="selectedPlaced.comp.attrs.format"
         class="input placed-editor__input placed-editor__input--short"
         placeholder="%H:%M"
-        title="时间格式：%H:%M:%S / %d 日 / %m 月 等"
+        @input="fitSelected"
       />
-      <span v-else class="placed-editor__hint">拖角改大小 · 拖动改位置 · Delete 删除</span>
-
-      <button class="btn btn--ghost btn--sm" title="写入像素（Enter）" @click="commitSelected">
-        <PixelIcon name="check" :size="12" />
-        落定
-      </button>
-      <button class="btn btn--ghost btn--sm" title="移除组件（Delete）" @click="removeSelected">
+      <button class="btn btn--ghost btn--sm" @click="removeSelected">
         <PixelIcon name="trash" :size="12" />
       </button>
     </div>
+
+    <PixelCanvas />
 
     <div class="statusbar">
       <span class="statusbar__item">X {{ coordX }} · Y {{ coordY }}</span>
@@ -100,7 +96,7 @@ function removeSelected() {
   align-items: center;
   gap: 8px;
   padding: 7px 12px;
-  border-top: 2px solid var(--accent);
+  border-bottom: 2px solid var(--ink);
   background: var(--paper-2);
 }
 
@@ -124,14 +120,6 @@ function removeSelected() {
 .placed-editor__input--short {
   flex: none;
   width: 120px;
-}
-
-.placed-editor__hint {
-  flex: 1;
-  min-width: 0;
-  color: var(--muted);
-  font-size: 9.5px;
-  letter-spacing: 0.04em;
 }
 
 .statusbar {

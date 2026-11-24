@@ -34,6 +34,24 @@ function pickColor(hex: string) {
       </button>
     </div>
 
+    <!-- 画笔/橡皮：粗细 -->
+    <div v-if="store.tool === 'pen' || store.tool === 'eraser'" class="tool-opts">
+      <span class="tool-opts__name">
+        <PixelIcon :name="store.tool === 'eraser' ? 'eraser' : 'pen'" :size="13" />
+        {{ store.tool === 'eraser' ? '橡皮选项' : '画笔选项' }}
+      </span>
+      <label class="tool-opts__item">
+        粗细
+        <select v-model.number="store.brushThickness" class="tool-opts__input">
+          <option :value="1">1</option>
+          <option :value="2">2</option>
+          <option :value="3">3</option>
+          <option :value="4">4</option>
+          <option :value="6">6</option>
+        </select>
+      </label>
+    </div>
+
     <!-- 矩形选项：边框粗细 / 是否填充 -->
     <div v-if="store.tool === 'rect'" class="tool-opts">
       <span class="tool-opts__name">

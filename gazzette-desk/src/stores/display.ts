@@ -1,7 +1,8 @@
 import { computed, reactive, ref, shallowRef, watch } from 'vue'
 import { defineStore } from 'pinia'
 import { registerDevice } from '@/utils/cloud-api'
-import type { PlacedComponent } from '@/components/library/library'
+import { flattenPlaced, type PlacedComponent } from '@/components/library/library'
+import { onFontLoaded } from '@/components/library/font'
 
 export type Tool = 'pen' | 'eraser' | 'fill' | 'rect' | 'line'
 export type PixelShape = 'square' | 'round'
@@ -36,6 +37,7 @@ export const SCREEN_PRESETS = [
   { label: '32×32', w: 32, h: 32 },
   { label: '64×32', w: 64, h: 32 },
   { label: '64×64', w: 64, h: 64 },
+  { label: '400×300', w: 400, h: 300 },
 ] as const
 
 const PALETTE_KEY = 'paper-web/palette'
@@ -97,19 +99,21 @@ interface Snapshot {
 
 export const useDisplayStore = defineStore('display', () => {
   /* ------------------------------------------------------------- canvas */
-  const width = ref(64)
-  const height = ref(32)
+  const width = ref(400)
+  const height = ref(300)
   /** 大屏（如 400×300 = 12 万格）用浅响应：内容变更由 revision 统一触发 */
   const cells = shallowRef<string[]>(Array.from({ length: width.value * height.value }, () => '#ffffff'))
   const revision = ref(0)
 
   const tool = ref<Tool>('pen')
-  const color = ref(DEFAULT_INK_COLORS[2]?.hex ?? '#e4574c')
+  const color = ref(DEFAULT_INK_COLORS[1]?.hex ?? '#1c1b18')
   const shape = ref<PixelShape>('square')
   const cursor = ref<{ x: number; y: number } | null>(null)
   /* 矩形工具选项 */
   const rectThickness = ref(1)
   const rectFilled = ref(false)
+  /* 画笔/橡皮粗细 */
+  const brushThickness = ref(1)
 
   /* --------------------------------------------------- 墨水颜色 / 占位符 */
   const palette = ref<InkColor[]>(loadPalette())
@@ -297,12 +301,21 @@ export const useDisplayStore = defineStore('display', () => {
     return map
   })
 
+  /** 导出/推送用的格子：手绘像素 + 放置组件图层叠加（透明不覆盖下层）。
+   *  fontTick：字库异步加载完成后重算（文字点阵在加载前后不同） */
+  const fontTick = ref(0)
+  onFontLoaded(() => {
+    fontTick.value++
+    revision.value++ // 触发画布重绘文字图层
+  })
   const hexRows = computed(() => {
+    void fontTick.value
+    const merged = flattenPlaced(cells.value, width.value, height.value)
     const rows: string[] = []
     for (let y = 0; y < height.value; y++) {
       let row = ''
       for (let x = 0; x < width.value; x++) {
-        const c = cells.value[y * width.value + x]
+        const c = merged[y * width.value + x]
         row += CHAR_OF.value.get(c ?? '') ?? '0'
       }
       rows.push(row)
@@ -635,47 +648,6 @@ export const useDisplayStore = defineStore('display', () => {
     }, 2400)
   }
 
-  /* ------------------------------------------------------------ seed art */
-  const HEART = [
-    '.##...##.',
-    '#########',
-    '#########',
-    '#########',
-    '.#######.',
-    '..#####..',
-    '...###...',
-    '....#....',
-  ]
-
-  function seedArt() {
-    const bg = bgColor.value
-    const red = palette.value.find((c) => c.name.includes('红'))?.hex ?? color.value
-    const scale = 3
-    const pw = HEART[0]?.length ?? 0
-    const ph = HEART.length
-    const ox = Math.floor((width.value - pw * scale) / 2)
-    const oy = Math.floor((height.value - ph * scale) / 2)
-
-    cells.value = Array.from({ length: width.value * height.value }, () => bg)
-    HEART.forEach((line, py) => {
-      ;[...line].forEach((ch, px) => {
-        if (ch !== '#') return
-        for (let dy = 0; dy < scale; dy++) {
-          for (let dx = 0; dx < scale; dx++) {
-            const x = ox + px * scale + dx
-            const y = oy + py * scale + dy
-            if (x >= 0 && x < width.value && y >= 0 && y < height.value) {
-              cells.value[y * width.value + x] = red
-            }
-          }
-        }
-      })
-    })
-    revision.value++
-  }
-
-  seedArt()
-
   return {
     // canvas
     width,
@@ -690,6 +662,7 @@ export const useDisplayStore = defineStore('display', () => {
     cursor,
     rectThickness,
     rectFilled,
+    brushThickness,
     bgColor,
     palette,
     activePalette,

@@ -3,7 +3,8 @@
  *
  * 组件的使用方式：
  *  - 点击 → 预览（ComponentPreviewModal 用 renderToCells 渲染）
- *  - 拖拽 → 放到像素画布上成为「放置组件」（可拖动、拖角改大小、编辑文本，双击/回车落定为像素）
+ *  - 拖拽/放置 → 成为画布上的「放置组件」图层，随时可拖动、拖角改大小、编辑文本，
+ *    内容实时叠加渲染到画布，导出/推送时合并进像素数据；没有落定步骤。
  *
  * 自定义组件由开发者以插件方式注册（plugins.ts 里调 registerComponent），不提供用户侧创建入口。
  */
@@ -29,7 +30,7 @@ export interface LibComponent {
   attrs: Record<string, string>
 }
 
-/** 放置在画布上的组件实例（可移动/缩放/编辑，未落定前不占用像素） */
+/** 放置在画布上的组件实例（图层，可随时移动/缩放/编辑，内容实时叠加到画布） */
 export interface PlacedComponent {
   uid: string
   /** 组件定义快照（编辑文本直接改这里的 template/attrs） */
@@ -40,24 +41,7 @@ export interface PlacedComponent {
   h: number
 }
 
-/* ------------------------------------------------------------- 预览样例数据 */
-
-/** 模板变量在预览/画布烙印时的示例取值（真实取值由云端数据源注入） */
-const SAMPLE_DATA: Record<string, string> = {
-  indoor_temp: '26.5',
-  outdoor_temp: '22.4',
-  indoor_humidity: '48',
-  'weather.temp': '23',
-  'weather.desc': '晴',
-  'weather.humidity': '62',
-  'weather.icon': 'sun',
-  battery: '85',
-}
-
-export function applyTemplate(text: string): string {
-  return text.replace(/\{([\w.]+)\}/g, (raw, key: string) => SAMPLE_DATA[key] ?? raw)
-}
-
+/* ------------------------------------------------------------- 内置组件 */
 /** strftime 子集：%H %M %S %d %m %Y */
 function strftime(fmt: string, d: Date): string {
   const p = (n: number) => String(n).padStart(2, '0')
@@ -76,12 +60,12 @@ export const BUILTIN_COMPONENTS: LibComponent[] = [
   {
     id: 'text',
     name: '文本',
-    desc: '文本模板，支持 {变量} 占位；放置后可编辑文本',
+    desc: '文本，放置后可编辑内容',
     icon: 'pen',
     w: 110,
     h: 16,
     kind: 'text',
-    template: '室内 {indoor_temp}℃',
+    template: '你好',
     attrs: {},
   },
   {
@@ -183,16 +167,17 @@ function drawComponent(ctx: CanvasRenderingContext2D, comp: LibComponent) {
   ctx.lineWidth = 1
 
   /**
-   * 点阵文字：等比缩放到「完全容纳」进组件框（框放大文字随之放大），
-   * 按目标像素的覆盖率采样 —— 缩小到 12px 也不会出现断笔。
+   * 点阵文字：按「完全容纳」进组件框的整数倍放大（1x/2x/3x…），
+   * 小于 1x 时按目标像素覆盖率面积采样缩小 —— 任意尺寸下笔画都保持锐利。
    */
   const drawText = (text: string) => {
     const buf = textToBuffer(text)
     if (!buf.width || !buf.height) return
-    const s = Math.min(w / buf.width, h / buf.height)
+    const raw = Math.min(w / buf.width, h / buf.height)
+    const s = raw >= 1 ? Math.floor(raw) : raw
     if (s <= 0) return
-    const ox = (w - buf.width * s) / 2
-    const oy = (h - buf.height * s) / 2
+    const ox = Math.round((w - buf.width * s) / 2)
+    const oy = Math.round((h - buf.height * s) / 2)
 
     for (let y = 0; y < h; y++) {
       const sy0 = (y - oy) / s
@@ -228,7 +213,7 @@ function drawComponent(ctx: CanvasRenderingContext2D, comp: LibComponent) {
 
   switch (comp.kind) {
     case 'text':
-      drawText(applyTemplate(comp.template ?? comp.name))
+      drawText(comp.template ?? comp.name)
       break
     case 'datetime':
       drawText(strftime(comp.attrs.format || '%H:%M', new Date()))
@@ -351,12 +336,35 @@ export function renderToCells(comp: LibComponent): string {
 
 let placedSeq = 0
 
-/** 把组件放到画布上（成为可拖动/缩放/编辑的放置组件，双击或回车落定为像素） */
+/** 文本类内容在 1x 点阵下的实际尺寸（画布像素） */
+export function textContentSize(comp: LibComponent): { w: number; h: number } | null {
+  const text =
+    comp.kind === 'datetime' ? strftime(comp.attrs.format || '%H:%M', new Date()) : comp.template ?? ''
+  const buf = textToBuffer(text)
+  if (!buf.width || !buf.height) return null
+  return { w: buf.width, h: buf.height }
+}
+
+/** 把组件放到画布上（成为可随时拖动/缩放/编辑的图层）；
+ *  文本/时间按内容自适应：取能放进画布的最大整数倍（≤3x），保证点阵清晰可读 */
 export async function placeComponent(comp: LibComponent, ox: number, oy: number) {
   await ensureFontLoaded()
   const store = useDisplayStore()
-  const w = Math.min(Math.max(4, Math.round(comp.w)), store.width)
-  const h = Math.min(Math.max(4, Math.round(comp.h)), store.height)
+  let w = comp.w
+  let h = comp.h
+  if (comp.kind === 'text' || comp.kind === 'datetime') {
+    const size = textContentSize(comp)
+    if (size) {
+      const s = Math.max(
+        1,
+        Math.min(3, Math.floor(Math.min(store.width / size.w, store.height / size.h))),
+      )
+      w = Math.min(size.w * s + 2, store.width)
+      h = Math.min(size.h * s + 2, store.height)
+    }
+  }
+  w = Math.min(Math.max(4, Math.round(w)), store.width)
+  h = Math.min(Math.max(4, Math.round(h)), store.height)
   const x = Math.max(0, Math.min(Math.round(ox), store.width - w))
   const y = Math.max(0, Math.min(Math.round(oy), store.height - h))
   store.addPlaced({
@@ -367,27 +375,42 @@ export async function placeComponent(comp: LibComponent, ox: number, oy: number)
     w,
     h,
   })
-  store.notify(`已放置「${comp.name}」，拖动调整位置，拖角改大小，双击落定`)
 }
 
-/** 放置组件的当前点阵图案 */
+/** 放置组件的当前点阵图案（透明像素不覆盖下层内容） */
 export function placedPattern(pc: PlacedComponent): string {
   return renderToCells({ ...pc.comp, w: pc.w, h: pc.h })
 }
 
-/** 落定：把放置组件的像素写入画布（可撤销），并移除放置态 */
-export function commitPlaced(pc: PlacedComponent) {
+/** 文本类放置组件：内容在当前框内连 1x 都放不下时，把框扩大到刚好容纳（避免降采样发糊） */
+export function fitPlacedText(pc: PlacedComponent) {
   const store = useDisplayStore()
-  const pattern = placedPattern(pc)
+  if (pc.comp.kind !== 'text' && pc.comp.kind !== 'datetime') return
+  const size = textContentSize(pc.comp)
+  if (!size) return
+  const s = Math.floor(Math.min(pc.w / size.w, pc.h / size.h))
+  if (s < 1) {
+    pc.w = Math.min(Math.max(4, size.w + 2), store.width - pc.x)
+    pc.h = Math.min(Math.max(4, size.h + 2), store.height - pc.y)
+  }
+}
+
+/** 把放置组件图层合并到底色网格上：返回叠加后的格子颜色数组 */
+export function flattenPlaced(baseCells: string[], w: number, h: number): string[] {
+  const out = baseCells.slice()
+  const store = useDisplayStore()
   const ink = store.darkestColor.hex
-  store.pushUndo()
-  for (let y = 0; y < pc.h; y++) {
-    for (let x = 0; x < pc.w; x++) {
-      if (pattern[y * pc.w + x] === '#') {
-        store.setCell(pc.x + x, pc.y + y, ink)
+  for (const pc of store.placedComponents) {
+    const pattern = placedPattern(pc)
+    for (let y = 0; y < pc.h; y++) {
+      for (let x = 0; x < pc.w; x++) {
+        if (pattern[y * pc.w + x] !== '#') continue
+        const gx = pc.x + x
+        const gy = pc.y + y
+        if (gx < 0 || gy < 0 || gx >= w || gy >= h) continue
+        out[gy * w + gx] = ink
       }
     }
   }
-  store.removePlaced(pc.uid)
-  store.notify(`「${pc.comp.name}」已落定为像素`)
+  return out
 }
