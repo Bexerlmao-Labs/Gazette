@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useDisplayStore } from '@/stores/display'
+import { commitPlaced, getLibComponent, placeComponent, placedPattern, type PlacedComponent } from '@/components/library/library'
 
 const store = useDisplayStore()
 
@@ -17,12 +18,21 @@ let painting = false
 let last: { x: number; y: number } | null = null
 let lastWidth = -1
 let observer: ResizeObserver | null = null
-/** 矩形工具：起点与描边预览 */
+/** 矩形/直线工具：起点与预览像素 */
 const rectStart = ref<{ x: number; y: number } | null>(null)
 const rectPreview = ref<{ x: number; y: number }[] | null>(null)
+const lineStart = ref<{ x: number; y: number } | null>(null)
+const linePreview = ref<{ x: number; y: number }[] | null>(null)
+/** 放置组件交互态 */
+let moveState: { uid: string; startPX: number; startPY: number; origX: number; origY: number } | null = null
+let resizeState: { uid: string; startPX: number; startPY: number; origW: number; origH: number } | null = null
+let lastClick: { uid: string | null; t: number } = { uid: null, t: 0 }
 
 const BOARD_BG = '#1b1b18'
 const DOT_COLOR = '#33322b'
+const ACCENT = '#df5430'
+/** 选中框 / 手柄颜色，与像素风主题一致 */
+const HANDLE_CELLS = 3
 
 const cursorStyle = computed(() => {
   if (!hover.value) return {}
@@ -34,12 +44,15 @@ const cursorStyle = computed(() => {
   }
 })
 
+/** 悬停光标：放置组件上变为移动/缩放提示 */
+const hoverCursor = ref('crosshair')
+
 function readCellSize(): number {
   const wrap = wrapEl.value
   if (!wrap) return 8
-  const maxWidth = wrap.clientWidth
-  if (!maxWidth) return 8
-  const maxHeight = Math.max(200, Math.min(window.innerHeight - 340, 520))
+  const maxWidth = wrap.clientWidth - 24
+  const maxHeight = wrap.clientHeight - 24
+  if (!maxWidth || !maxHeight) return 8
   return Math.max(2, Math.floor(Math.min(maxWidth / store.width, maxHeight / store.height)))
 }
 
@@ -99,45 +112,108 @@ function render() {
   ctx.fillStyle = BOARD_BG
   ctx.fillRect(0, 0, stageW.value, stageH.value)
 
-  const gap = cell >= 5 ? 1 : 0
-  const isRound = store.shape === 'round'
-  const radius = Math.max(1, Math.round(cell * 0.14))
-  const dotSize = Math.max(1, Math.min(2, Math.round(cell * 0.14)))
-
+  const cellsArr = store.cells
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
-      const color = store.cells[y * w + x]
-      const px = x * cell + gap
-      const py = y * cell + gap
-      const size = cell - gap * 2
-
-      if (color) {
-        ctx.fillStyle = color
-        if (isRound) {
-          ctx.beginPath()
-          ctx.arc(px + size / 2, py + size / 2, size / 2, 0, Math.PI * 2)
-          ctx.fill()
-        } else if (radius > 1) {
-          roundRectPath(ctx, px, py, size, radius)
-          ctx.fill()
-        } else {
-          ctx.fillRect(px, py, size, size)
-        }
-      } else if (cell >= 6) {
-        ctx.fillStyle = DOT_COLOR
-        const offset = (cell - dotSize) / 2
-        ctx.fillRect(x * cell + offset, y * cell + offset, dotSize, dotSize)
-      }
+      drawCell(x, y, cellsArr[y * w + x], false)
     }
   }
 
   // 矩形预览：拖拽过程中的描边
   if (rectPreview.value) {
-    ctx.fillStyle = store.color
-    const psize = cell - gap * 2
-    for (const p of rectPreview.value) {
-      ctx.fillRect(p.x * cell + gap, p.y * cell + gap, psize, psize)
+    fillPreview(rectPreview.value)
+  }
+  if (linePreview.value) {
+    fillPreview(linePreview.value)
+  }
+
+  // 放置组件：点阵 + 边框 + 缩放手柄
+  drawPlaced()
+}
+
+function drawPlaced() {
+  if (!ctx) return
+  const gap = cell >= 5 ? 1 : 0
+  const ink = store.darkestColor.hex
+  for (const pc of store.placedComponents) {
+    const pattern = placedPattern(pc)
+    ctx.fillStyle = ink
+    for (let y = 0; y < pc.h; y++) {
+      for (let x = 0; x < pc.w; x++) {
+        if (pattern[y * pc.w + x] !== '#') continue
+        ctx.fillRect((pc.x + x) * cell + gap, (pc.y + y) * cell + gap, cell - gap * 2, cell - gap * 2)
+      }
     }
+    const selected = store.selectedPlacedUid === pc.uid
+    ctx.setLineDash([4, 3])
+    ctx.strokeStyle = selected ? ACCENT : 'rgba(223, 84, 48, 0.5)'
+    ctx.strokeRect(pc.x * cell + 0.5, pc.y * cell + 0.5, pc.w * cell - 1, pc.h * cell - 1)
+    ctx.setLineDash([])
+    if (selected) {
+      // 右下角缩放手柄
+      const hs = HANDLE_CELLS * cell
+      ctx.fillStyle = ACCENT
+      ctx.fillRect((pc.x + pc.w) * cell - hs, (pc.y + pc.h) * cell - hs, hs, hs)
+    }
+  }
+}
+
+function hitPlaced(point: { x: number; y: number }) {
+  const list = store.placedComponents
+  for (let i = list.length - 1; i >= 0; i--) {
+    const pc = list[i]
+    if (point.x < pc.x || point.x >= pc.x + pc.w || point.y < pc.y || point.y >= pc.y + pc.h) continue
+    const onHandle =
+      point.x >= pc.x + pc.w - HANDLE_CELLS && point.y >= pc.y + pc.h - HANDLE_CELLS
+    return { pc, onHandle }
+  }
+  return null
+}
+
+/** 单格绘制；增量调用时先清底避免旧点/棋盘点残留，全量渲染时已清屏可跳过 */
+function drawCell(x: number, y: number, color?: string, clear = true) {
+  if (!ctx) return
+  const w = store.width
+  const c = color ?? store.cells[y * w + x]
+  const gap = cell >= 5 ? 1 : 0
+  const isRound = store.shape === 'round'
+  const radius = Math.max(1, Math.round(cell * 0.14))
+  const dotSize = Math.max(1, Math.min(2, Math.round(cell * 0.14)))
+  const px = x * cell
+  const py = y * cell
+
+  if (clear) {
+    ctx.fillStyle = BOARD_BG
+    ctx.fillRect(px, py, cell, cell)
+  }
+
+  if (c) {
+    ctx.fillStyle = c
+    if (isRound) {
+      ctx.beginPath()
+      ctx.arc(px + gap + (cell - gap * 2) / 2, py + gap + (cell - gap * 2) / 2, (cell - gap * 2) / 2, 0, Math.PI * 2)
+      ctx.fill()
+    } else if (radius > 1) {
+      roundRectPath(ctx, px + gap, py + gap, cell - gap * 2, radius)
+      ctx.fill()
+    } else {
+      ctx.fillRect(px + gap, py + gap, cell - gap * 2, cell - gap * 2)
+    }
+  } else if (cell >= 6) {
+    ctx.fillStyle = DOT_COLOR
+    const offset = (cell - dotSize) / 2
+    ctx.fillRect(px + offset, py + offset, dotSize, dotSize)
+  }
+}
+
+/** 矩形预览描边叠加 */
+function fillPreview(points: { x: number; y: number }[]) {
+  if (!ctx) return
+  ctx.fillStyle = store.color
+  const gap = cell >= 5 ? 1 : 0
+  const psize = cell - gap * 2
+  for (const p of points) {
+    ctx.fillRect(p.x * cell + gap, p.y * cell + gap, psize, psize)
   }
 }
 
@@ -153,25 +229,93 @@ function pickCell(event: PointerEvent) {
 
 function applyBrush(x: number, y: number) {
   const color = store.tool === 'eraser' ? '' : store.color
+  const idx = y * store.width + x
+  if (store.cells[idx] === color) return
   store.setCell(x, y, color)
+  // 增量绘制：只画变了的这一格
+  drawCell(x, y)
 }
 
-/** 计算矩形描边像素（不重复四角） */
-function rectOutline(a: { x: number; y: number }, b: { x: number; y: number }) {
+/** 矩形像素：填充=实心；否则描边（粗细 thickness，格子太小时退化为实心） */
+function rectCells(a: { x: number; y: number }, b: { x: number; y: number }) {
   const pts: { x: number; y: number }[] = []
   const x1 = Math.min(a.x, b.x)
   const x2 = Math.max(a.x, b.x)
   const y1 = Math.min(a.y, b.y)
   const y2 = Math.max(a.y, b.y)
-  for (let x = x1; x <= x2; x++) {
-    pts.push({ x, y: y1 })
-    if (y2 !== y1) pts.push({ x, y: y2 })
+  const t = Math.max(1, Math.min(6, store.rectThickness))
+
+  if (store.rectFilled) {
+    for (let y = y1; y <= y2; y++) {
+      for (let x = x1; x <= x2; x++) pts.push({ x, y })
+    }
+    return pts
   }
-  for (let y = y1 + 1; y < y2; y++) {
-    pts.push({ x: x1, y })
-    if (x2 !== x1) pts.push({ x: x2, y })
+  for (let y = y1; y <= y2; y++) {
+    for (let x = x1; x <= x2; x++) {
+      if (x - x1 < t || x2 - x < t || y - y1 < t || y2 - y < t) pts.push({ x, y })
+    }
   }
   return pts
+}
+
+/** Bresenham 直线像素（粗细 thickness，按方块加粗） */
+function lineCells(a: { x: number; y: number }, b: { x: number; y: number }) {
+  const pts: { x: number; y: number }[] = []
+  const t = Math.max(1, Math.min(6, store.rectThickness))
+  let { x: x0, y: y0 } = a
+  const x1 = b.x
+  const y1 = b.y
+  const dx = Math.abs(x1 - x0)
+  const dy = Math.abs(y1 - y0)
+  const sx = x0 < x1 ? 1 : -1
+  const sy = y0 < y1 ? 1 : -1
+  let err = dx - dy
+  const seen = new Set<number>()
+  for (;;) {
+    for (let oy = 0; oy < t; oy++) {
+      for (let ox = 0; ox < t; ox++) {
+        const key = (y0 + oy) * store.width + (x0 + ox)
+        if (!seen.has(key)) {
+          seen.add(key)
+          pts.push({ x: x0 + ox, y: y0 + oy })
+        }
+      }
+    }
+    if (x0 === x1 && y0 === y1) break
+    const e2 = 2 * err
+    if (e2 > -dy) {
+      err -= dy
+      x0 += sx
+    }
+    if (e2 < dx) {
+      err += dx
+      y0 += sy
+    }
+  }
+  return pts
+}
+
+/** 预览增量更新：只重画退出预览的格子，其余叠加预览色 */
+function updatePreview(next: { x: number; y: number }[], state: typeof rectPreview) {
+  const prev = state.value ?? []
+  if (next.length === prev.length && next.every((p, i) => prev[i] === p)) return
+  const nextKeys = new Set(next.map((p) => p.y * store.width + p.x))
+  for (const p of prev) {
+    if (!nextKeys.has(p.y * store.width + p.x)) drawCell(p.x, p.y)
+  }
+  fillPreview(next)
+  state.value = next
+}
+
+/** 拖拽结束：把预览像素提交到画布 */
+function commitPreview(start: typeof rectStart, state: typeof rectPreview) {
+  const points = state.value
+  start.value = null
+  state.value = null
+  if (!points) return
+  const color = store.color
+  for (const p of points) store.setCell(p.x, p.y, color)
 }
 
 function onPointerDown(event: PointerEvent) {
@@ -183,15 +327,25 @@ function onPointerDown(event: PointerEvent) {
   hover.value = point
   store.cursor = point
 
-  if (store.tool === 'picker') {
-    const color = store.cells[point.y * store.width + point.x]
-    if (color) {
-      store.color = color
-      store.tool = 'pen'
-      store.notify(`已取色 ${color.toUpperCase()}`)
+  // 放置组件优先：命中则选中并进入移动/缩放；双击落定为像素
+  const hit = hitPlaced(point)
+  const now = performance.now()
+  if (hit) {
+    store.selectPlaced(hit.pc.uid)
+    if (lastClick.uid === hit.pc.uid && now - lastClick.t < 350) {
+      commitPlaced(hit.pc)
+      lastClick = { uid: null, t: 0 }
+      return
+    }
+    lastClick = { uid: hit.pc.uid, t: now }
+    if (hit.onHandle) {
+      resizeState = { uid: hit.pc.uid, startPX: point.x, startPY: point.y, origW: hit.pc.w, origH: hit.pc.h }
+    } else {
+      moveState = { uid: hit.pc.uid, startPX: point.x, startPY: point.y, origX: hit.pc.x, origY: hit.pc.y }
     }
     return
   }
+  lastClick = { uid: null, t: 0 }
 
   store.pushUndo()
 
@@ -204,7 +358,15 @@ function onPointerDown(event: PointerEvent) {
     rectStart.value = point
     rectPreview.value = [point]
     painting = true
-    render()
+    fillPreview(rectPreview.value)
+    return
+  }
+
+  if (store.tool === 'line') {
+    lineStart.value = point
+    linePreview.value = [point]
+    painting = true
+    fillPreview(linePreview.value)
     return
   }
 
@@ -213,17 +375,58 @@ function onPointerDown(event: PointerEvent) {
   applyBrush(point.x, point.y)
 }
 
-function onPointerMove(event: PointerEvent) {
-  const point = pickCell(event)
+/** pointermove 只记录最新点，实际绘制统一在 rAF 帧里做：
+ *  高频事件不再逐个同步处理，快速拖拽时每帧工作量有上限 */
+let pendingPoint: { x: number; y: number } | null = null
+let moveFrame = 0
+
+function processMove() {
+  moveFrame = 0
+  const point = pendingPoint
+  pendingPoint = null
+  if (!point) return
+
   hover.value = point
   store.cursor = point
 
-  if (!painting || !point || store.tool === 'fill' || store.tool === 'picker') return
+  // 放置组件：拖动 / 拖角缩放
+  if (moveState) {
+    const pc = store.placedComponents.find((p) => p.uid === moveState!.uid)
+    if (pc) {
+      const nx = Math.max(0, Math.min(moveState.origX + point.x - moveState.startPX, store.width - pc.w))
+      const ny = Math.max(0, Math.min(moveState.origY + point.y - moveState.startPY, store.height - pc.h))
+      store.updatePlaced(pc.uid, { x: nx, y: ny })
+    }
+    return
+  }
+  if (resizeState) {
+    const pc = store.placedComponents.find((p) => p.uid === resizeState!.uid)
+    if (pc) {
+      const nw = Math.max(4, Math.min(resizeState.origW + point.x - resizeState.startPX, store.width - pc.x))
+      const nh = Math.max(2, Math.min(resizeState.origH + point.y - resizeState.startPY, store.height - pc.y))
+      store.updatePlaced(pc.uid, { w: nw, h: nh })
+    }
+    return
+  }
 
-  // 矩形拖拽：仅更新预览
+  // 悬停光标反馈
+  if (!painting) {
+    const hit = hitPlaced(point)
+    hoverCursor.value = hit ? (hit.onHandle ? 'nwse-resize' : 'move') : 'crosshair'
+    return
+  }
+
+  if (store.tool === 'fill') return
+
+  // 矩形拖拽：增量更新预览
   if (rectStart.value) {
-    rectPreview.value = rectOutline(rectStart.value, point)
-    render()
+    updatePreview(rectCells(rectStart.value, point), rectPreview)
+    return
+  }
+
+  // 直线拖拽：同矩形增量策略
+  if (lineStart.value) {
+    updatePreview(lineCells(lineStart.value, point), linePreview)
     return
   }
 
@@ -237,14 +440,38 @@ function onPointerMove(event: PointerEvent) {
   last = point
 }
 
+function flushMove() {
+  if (moveFrame) {
+    cancelAnimationFrame(moveFrame)
+    moveFrame = 0
+  }
+  processMove()
+}
+
+function onPointerMove(event: PointerEvent) {
+  const point = pickCell(event)
+  if (!point) return
+  pendingPoint = point
+  if (!moveFrame) moveFrame = requestAnimationFrame(processMove)
+}
+
 function onPointerUp(event: PointerEvent) {
-  // 矩形结束：提交描边像素
+  // 先处理完未落帧的移动，保证笔画/拖拽完整
+  flushMove()
+
+  moveState = null
+  resizeState = null
+
+  // 矩形结束：提交像素
   if (rectStart.value && rectPreview.value) {
-    const color = store.color
-    for (const p of rectPreview.value) store.setCell(p.x, p.y, color)
-    rectStart.value = null
-    rectPreview.value = null
-    render()
+    commitPreview(rectStart, rectPreview)
+    scheduleRender()
+  }
+
+  // 直线结束：提交像素
+  if (lineStart.value && linePreview.value) {
+    commitPreview(lineStart, linePreview)
+    scheduleRender()
   }
 
   painting = false
@@ -257,12 +484,56 @@ function onPointerUp(event: PointerEvent) {
 
 function onPointerLeave() {
   if (painting) return
+  if (moveFrame) {
+    cancelAnimationFrame(moveFrame)
+    moveFrame = 0
+    pendingPoint = null
+  }
   hover.value = null
   store.cursor = null
 }
 
+/* ------------------------------------------------- 组件库拖入放置 */
+
+function onDragOver(event: DragEvent) {
+  event.preventDefault()
+  if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy'
+}
+
+function onDrop(event: DragEvent) {
+  event.preventDefault()
+  const id = event.dataTransfer?.getData('lib-comp')
+  if (!id) return
+  const comp = getLibComponent(id)
+  if (!comp) return
+  const canvas = canvasEl.value
+  if (!canvas) return
+  const rect = canvas.getBoundingClientRect()
+  void placeComponent(comp, (event.clientX - rect.left) / cell, (event.clientY - rect.top) / cell)
+}
+
 function handleWindowResize() {
   layout()
+}
+
+/** 键盘：Delete 删除选中放置组件，Enter 落定，Esc 取消选中 */
+function onKeyDown(e: KeyboardEvent) {
+  const t = e.target as HTMLElement | null
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT')) return
+  const uid = store.selectedPlacedUid
+  if (!uid) return
+  const pc = store.placedComponents.find((p) => p.uid === uid)
+  if (!pc) return
+  if (e.key === 'Delete' || e.key === 'Backspace') {
+    store.removePlaced(uid)
+  } else if (e.key === 'Enter') {
+    commitPlaced(pc)
+  } else if (e.key === 'Escape') {
+    store.selectPlaced(null)
+  } else {
+    return
+  }
+  e.preventDefault()
 }
 
 watch(
@@ -271,20 +542,46 @@ watch(
   { flush: 'post' },
 )
 
-watch(() => store.revision, render, { flush: 'post' })
+/** rAF 合并渲染：revision 短时间多次变化（撤销/填充/组件烙印等）只绘一帧 */
+let renderQueued = false
+function scheduleRender() {
+  if (renderQueued) return
+  renderQueued = true
+  requestAnimationFrame(() => {
+    renderQueued = false
+    render()
+  })
+}
 
-// 切换工具时取消未完成的矩形
+watch(
+  () => store.revision,
+  () => {
+    // 手绘/矩形/直线拖拽过程中已按格增量绘制，跳过全量重绘
+    if (painting || rectStart.value || lineStart.value) return
+    scheduleRender()
+  },
+  { flush: 'post' },
+)
+
+// 放置组件列表 / 选中态变化 → 重绘叠加层
+watch(() => store.placedComponents, () => scheduleRender(), { deep: true })
+watch(() => store.selectedPlacedUid, () => scheduleRender())
+
+// 切换工具时取消未完成的矩形/直线
 watch(
   () => store.tool,
   () => {
     rectStart.value = null
     rectPreview.value = null
-    render()
+    lineStart.value = null
+    linePreview.value = null
+    scheduleRender()
   },
 )
 
 onMounted(() => {
   layout()
+  window.addEventListener('keydown', onKeyDown)
   lastWidth = wrapEl.value?.clientWidth ?? -1
   if (wrapEl.value) {
     observer = new ResizeObserver(() => {
@@ -299,6 +596,11 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  if (moveFrame) {
+    cancelAnimationFrame(moveFrame)
+    moveFrame = 0
+  }
+  window.removeEventListener('keydown', onKeyDown)
   observer?.disconnect()
   observer = null
   window.removeEventListener('resize', handleWindowResize)
@@ -310,11 +612,14 @@ onBeforeUnmount(() => {
     <div class="board__stage" :style="{ width: `${stageW}px`, height: `${stageH}px` }">
       <canvas
         ref="canvasEl"
+        :style="{ cursor: hoverCursor }"
         @pointerdown="onPointerDown"
         @pointermove="onPointerMove"
         @pointerup="onPointerUp"
         @pointercancel="onPointerUp"
         @pointerleave="onPointerLeave"
+        @dragover="onDragOver"
+        @drop="onDrop"
         @contextmenu.prevent
       />
       <span v-if="hover" class="board__cursor" :style="cursorStyle" />
@@ -324,9 +629,12 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .board {
+  flex: 1;
+  min-height: 0;
   display: flex;
+  align-items: center;
   justify-content: center;
-  padding: 2px 8px 8px 2px;
+  padding: 12px;
 }
 
 .board__stage {

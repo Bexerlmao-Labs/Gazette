@@ -1,7 +1,9 @@
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, reactive, ref, shallowRef, watch } from 'vue'
 import { defineStore } from 'pinia'
+import { registerDevice } from '@/utils/cloud-api'
+import type { PlacedComponent } from '@/components/library/library'
 
-export type Tool = 'pen' | 'eraser' | 'fill' | 'picker' | 'rect'
+export type Tool = 'pen' | 'eraser' | 'fill' | 'rect' | 'line'
 export type PixelShape = 'square' | 'round'
 export type ModalName = 'wifi' | 'export' | 'settings' | null
 
@@ -97,13 +99,17 @@ export const useDisplayStore = defineStore('display', () => {
   /* ------------------------------------------------------------- canvas */
   const width = ref(64)
   const height = ref(32)
-  const cells = ref<string[]>(Array.from({ length: width.value * height.value }, () => '#ffffff'))
+  /** 大屏（如 400×300 = 12 万格）用浅响应：内容变更由 revision 统一触发 */
+  const cells = shallowRef<string[]>(Array.from({ length: width.value * height.value }, () => '#ffffff'))
   const revision = ref(0)
 
   const tool = ref<Tool>('pen')
   const color = ref(DEFAULT_INK_COLORS[2]?.hex ?? '#e4574c')
   const shape = ref<PixelShape>('square')
   const cursor = ref<{ x: number; y: number } | null>(null)
+  /* 矩形工具选项 */
+  const rectThickness = ref(1)
+  const rectFilled = ref(false)
 
   /* --------------------------------------------------- 墨水颜色 / 占位符 */
   const palette = ref<InkColor[]>(loadPalette())
@@ -145,7 +151,28 @@ export const useDisplayStore = defineStore('display', () => {
       color.value = (list.find((c) => c.hex !== bgColor.value) ?? list[0])?.hex ?? bgColor.value
     }
   })
-  const filled = computed(() => cells.value.reduce((n, c) => n + (c !== bgColor.value ? 1 : 0), 0))
+  /** 已填充格数：大屏全量扫描贵，随 revision 防抖刷新 */
+  const filled = ref(0)
+  let filledTimer: ReturnType<typeof setTimeout> | undefined
+
+  function recountFilled() {
+    if (filledTimer) {
+      clearTimeout(filledTimer)
+      filledTimer = undefined
+    }
+    filled.value = cells.value.reduce((n, c) => n + (c !== bgColor.value ? 1 : 0), 0)
+  }
+
+  watch(revision, () => {
+    if (filledTimer) return
+    filledTimer = setTimeout(() => {
+      filledTimer = undefined
+      filled.value = cells.value.reduce((n, c) => n + (c !== bgColor.value ? 1 : 0), 0)
+    }, 300)
+  })
+  // 底色变化会改变「非底色」的判定，立即重算
+  watch(bgColor, recountFilled)
+  recountFilled()
 
   function setCell(x: number, y: number, hex: string) {
     if (x < 0 || y < 0 || x >= width.value || y >= height.value) return
@@ -308,6 +335,10 @@ export const useDisplayStore = defineStore('display', () => {
     deviceName: '',
     sizeReceived: false,
     pushing: false,
+    /** 设备 SN（固件回复，未回复时自动生成） */
+    sn: '',
+    /** 云端模式：'' 未注册 / 'cloud' 已注册 / 'offline' SN 冲突只能离线 */
+    cloudMode: '' as '' | 'cloud' | 'offline',
     logs: [] as string[],
   })
 
@@ -339,7 +370,7 @@ export const useDisplayStore = defineStore('display', () => {
     }
   }
 
-  /** 解析开发板发来的文本行，SIZE 指令用于同步屏幕尺寸 */
+  /** 解析开发板发来的文本行，SIZE 指令用于同步屏幕尺寸，SN 指令用于云端注册 */
   function handleLine(line: string) {
     const trimmed = line.trim()
     if (!trimmed) return
@@ -353,6 +384,12 @@ export const useDisplayStore = defineStore('display', () => {
         log(`< SIZE ${w}x${h} · 屏幕尺寸已同步`)
         notify(`已读取屏幕尺寸 ${w} × ${h}`)
       }
+      return
+    }
+    const sn = trimmed.match(/^SN[:=](.+)$/i)
+    if (sn) {
+      ble.sn = sn[1].trim()
+      log(`< SN ${ble.sn}`)
       return
     }
     log(`< ${trimmed}`)
@@ -382,6 +419,8 @@ export const useDisplayStore = defineStore('display', () => {
     ble.connected = false
     ble.pushing = false
     ble.sizeReceived = false
+    ble.sn = ''
+    ble.cloudMode = ''
   }
 
   function onGattDisconnected() {
@@ -421,8 +460,10 @@ export const useDisplayStore = defineStore('display', () => {
       log(`< 已连接 ${ble.deviceName}`)
       notify('蓝牙连接成功')
 
-      // 向开发板请求屏幕尺寸（设备回复 SIZE:w,h）
+      // 向开发板请求屏幕尺寸与 SN（设备回复 SIZE:w,h / SN:xxx）
       await writeRaw('SIZE?\n')
+      await writeRaw('SN?\n')
+      await registerCloudDevice()
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       log(`! 连接失败 ${message}`)
@@ -430,6 +471,58 @@ export const useDisplayStore = defineStore('display', () => {
       cleanupBle()
     } finally {
       ble.connecting = false
+    }
+  }
+
+  function waitFor(predicate: () => boolean, timeoutMs: number) {
+    return new Promise<void>((resolve) => {
+      const start = Date.now()
+      const timer = setInterval(() => {
+        if (predicate() || Date.now() - start > timeoutMs) {
+          clearInterval(timer)
+          resolve()
+        }
+      }, 100)
+    })
+  }
+
+  /** 蓝牙连接成功后自动向云端注册设备；SN 已存在时降级为离线模式 */
+  async function registerCloudDevice() {
+    // 给固件一点时间回复 SIZE / SN，超时则用当前画布尺寸
+    await waitFor(() => ble.sizeReceived && !!ble.sn, 2500)
+
+    let sn = ble.sn
+    if (!sn) {
+      sn =
+        'PI' +
+        (ble.deviceName || 'ESP32')
+          .toUpperCase()
+          .replace(/[^A-Z0-9]/g, '')
+          .slice(0, 8)
+          .padEnd(8, 'X')
+      log(`> 固件未回复 SN，使用生成的 ${sn}`)
+      ble.sn = sn
+    }
+
+    try {
+      await registerDevice({
+        sn,
+        name: ble.deviceName || '蓝牙墨水屏',
+        width: width.value,
+        height: height.value,
+      })
+      ble.cloudMode = 'cloud'
+      log('< 云端注册成功，设备已接入云端画面')
+      notify('设备已自动注册到云端')
+    } catch (e) {
+      ble.cloudMode = 'offline'
+      const msg = e instanceof Error ? e.message : String(e)
+      log(`! 云端注册失败 ${msg}`)
+      if (msg.includes('已') || msg.includes('SN')) {
+        notify('SN 已存在于云端，本机仅可使用离线模式（蓝牙推送）')
+      } else {
+        notify('云端注册失败，当前仅可使用离线模式（蓝牙推送）')
+      }
     }
   }
 
@@ -495,6 +588,29 @@ export const useDisplayStore = defineStore('display', () => {
     } finally {
       wifiWriting.value = false
     }
+  }
+
+  /* ------------------------------------------------------- 放置组件（可拖动/缩放/编辑） */
+  const placedComponents = ref<PlacedComponent[]>([])
+  const selectedPlacedUid = ref<string | null>(null)
+
+  function addPlaced(pc: PlacedComponent) {
+    placedComponents.value.push(pc)
+    selectedPlacedUid.value = pc.uid
+  }
+
+  function updatePlaced(uid: string, patch: Partial<PlacedComponent>) {
+    const pc = placedComponents.value.find((p) => p.uid === uid)
+    if (pc) Object.assign(pc, patch)
+  }
+
+  function removePlaced(uid: string) {
+    placedComponents.value = placedComponents.value.filter((p) => p.uid !== uid)
+    if (selectedPlacedUid.value === uid) selectedPlacedUid.value = null
+  }
+
+  function selectPlaced(uid: string | null) {
+    selectedPlacedUid.value = uid
   }
 
   /* -------------------------------------------------------------- modal */
@@ -572,9 +688,12 @@ export const useDisplayStore = defineStore('display', () => {
     color,
     shape,
     cursor,
+    rectThickness,
+    rectFilled,
     bgColor,
     palette,
     activePalette,
+    darkestColor,
     setCell,
     floodFill,
     clear,
@@ -601,6 +720,13 @@ export const useDisplayStore = defineStore('display', () => {
     wifi,
     wifiWriting,
     writeWifiConfig,
+    // 放置组件
+    placedComponents,
+    selectedPlacedUid,
+    addPlaced,
+    updatePlaced,
+    removePlaced,
+    selectPlaced,
     // ui
     activeModal,
     openModal,
