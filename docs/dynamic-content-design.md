@@ -125,6 +125,61 @@ text 72,312,150,30 font=1 "扫码查看完整天气趋势"
 - 变量缺失时该元素**跳过绘制**（而不是报错），避免一个数据源故障毁掉整屏；
 - 数据集本身**不入库**，由数据源在渲染时实时组装（未来若做"历史回放"再加表）。
 
+### 4.1 数据源：AI 用量（GLM / DeepSeek，融合命名空间）
+
+编辑器侧组件模板可写 `{变量}` 占位；画布/预览为**设计视图**，一律展示虚拟示例内容
+（文本替换示例值、折线图/饼图绘制样例数据），不显示变量名本身；
+真实数据只在服务端渲染时注入，变量缺失则跳过该元素。
+
+**融合命名空间 `ai.*`**（推荐）：GLM（账单用量）+ DeepSeek（平台用量 + 官方余额）
+统一汇总，配套插件组件组「AI 用量」（总览文本 / 构成饼图 / GLM 月度折线 / DS 月度折线）。
+**用量数据一律不落库**：服务端渲染时实时向平台拉取，仅 60s 内存缓存防频控。
+
+| 变量 | 说明 | 来源 |
+|---|---|---|
+| `ai.total_tokens` | AI 累计 token | GLM 账单 + DeepSeek 平台/代理 |
+| `ai.balance.total` | AI 账户余额（元） | DeepSeek `GET /user/balance` |
+| `ai.usage.pie_seq` | 用量构成 [GLM, DeepSeek]（饼图） | 融合 |
+| `glm.usage.total_tokens` / `requests` | 近 7 天累计用量 / 调用次数 | 智谱账单接口 |
+| `glm.usage.seq` / `seq_labels` | 近 7 天每日用量 + 日期标签 | 同上 |
+| `glm.usage.month_seq` / `month_labels` | 近 12 个月每月用量（空缺月=0）+ 月份标签 | 同上 |
+| `deepseek.balance.total` / `.granted` / `.topped_up` / `pie_seq` | 余额 / 构成 | 官方 `GET /user/balance` |
+| `deepseek.usage.total_tokens` / `month_seq` / `month_labels` | DeepSeek 累计/月度用量 | 平台登录态实时查询 |
+
+**DeepSeek 用量的现实约束**（已实测验证）：
+
+- 官方仅开放 `GET /user/balance`（余额），`/dashboard/billing/usage`、`/user/usage` 均 404；
+- 平台网页 `platform.deepseek.com/usage` 需登录态，且有 WAF/验证码，无法稳定自动化；
+- 因此 DeepSeek 用量有三种方式（**按需选择，用什么配什么**）：
+
+| 方式 | 凭据 | 说明 |
+|---|---|---|
+| 平台 Cookie（推荐） | 浏览器登录态 Cookie | `platform.deepseek.com/usage` 登录后 F12 复制 Cookie 粘贴；AES 加密存储，不碰账号密码，每次渲染实时查询 |
+| 账号密码 | 账号+密码 | ⚠️ AES 加密存服务端数据库，自动登录可能被 WAF/验证码拦截；**UI 红字警告，不信任请勿填入** |
+
+另附 **AI 调用代理** `POST /api/ai/{provider}/chat/completions`（OpenAI 兼容，Key 来自数据源设置）：
+统一调用入口，响应原样透传，本服务不落库、不记录用量/对话数据。
+
+**图表元素增强**（折线/柱状/饼图通用）：
+
+- `title=`（支持 {变量}，顶部居中，可编辑）、`x-label=` / `y-label=` 轴含义、
+  `x-ticks=<变量>` 横轴刻度（指向 `*_labels` 数组，均匀取样标注）、纵轴自动标注 y-max/y-min；
+- `points=N` 槽位布局：数据不足 N 点时左对齐、右侧留白；
+- 饼图：占比 ≥12% 的扇区标注百分比；数据全为 0/空缺时画外圈 + "无数据"，不再整块消失；
+- 月度序列固定近 12 个月档位，未使用月份填 0，`month_labels` 标注月份。
+
+**配套**：
+
+- 凭证存 `t_data_source`（`auth_type`=api_key/platform_cookie/platform_password，敏感字段 AES 加密，
+  密钥 `gazette.security.secret`，生产必须更换默认值）；**本表只存凭证，不存任何用量数据**；
+- 配置界面「数据源设置」：只显示画布组件实际依赖的数据源与当前认证方式对应的字段；
+  组件未配置时预览/画布编辑条出现「去配置数据源」入口；
+- 编辑器接口：`GET /api/token-usage/variables`、`GET|POST /api/token-usage/keys`（只保存填写字段）、
+  `GET /api/token-usage/usage?provider=`；
+- 服务端 Hutool 拉取，60s 缓存 + 失败降级（DeepSeek 用量查询失败自动降级为代理累计，元素不毁屏）；
+- 上游地址可用 `gazette.token-usage.*.url` / `gazette.ai-proxy.*.url` 覆盖（平台用量/登录接口
+  可在 F12 确认实际路径后配置）。
+
 ## 5. 渲染与刷新流程
 
 ```
