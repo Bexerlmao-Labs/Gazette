@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { RouterLink } from 'vue-router'
 import PixelIcon from '@/components/PixelIcon.vue'
 import { useDisplayStore } from '@/stores/display'
 
@@ -31,21 +30,6 @@ const store = useDisplayStore()
       </span>
     </div>
 
-    <nav class="hd__nav">
-      <RouterLink class="nav-link" :to="{ name: 'canvas' }">
-        <PixelIcon name="pen" :size="14" />
-        画布
-      </RouterLink>
-      <RouterLink class="nav-link" :to="{ name: 'image' }">
-        <PixelIcon name="image" :size="14" />
-        照片上传
-      </RouterLink>
-      <RouterLink class="nav-link" :to="{ name: 'cloud' }">
-        <PixelIcon name="spark" :size="14" />
-        云端画面
-      </RouterLink>
-    </nav>
-
     <div class="hd__right">
       <div class="status" :class="{ 'is-on': store.ble.connected }">
         <i class="status__dot" />
@@ -54,6 +38,15 @@ const store = useDisplayStore()
         }}</span>
       </div>
 
+      <button
+        class="btn btn--ghost btn--sm"
+        title="屏幕尺寸、颜色勾选与位图填充符"
+        @click="store.openModal('settings')"
+      >
+        <PixelIcon name="gear" :size="14" />
+        屏幕设置
+      </button>
+
       <button class="btn btn--ghost btn--sm" @click="store.openModal('wifi')">
         <PixelIcon name="wifi" :size="14" />
         WiFi 配置
@@ -61,13 +54,6 @@ const store = useDisplayStore()
       <button class="btn btn--ghost btn--sm" @click="store.openModal('export')">
         <PixelIcon name="download" :size="14" />
         导出
-      </button>
-      <button
-        class="iconbtn"
-        title="墨水屏设置（颜色 / 占位符 / 屏幕尺寸）"
-        @click="store.openModal('settings')"
-      >
-        <PixelIcon name="gear" :size="14" />
       </button>
       <button
         class="btn btn--primary"
@@ -126,41 +112,6 @@ const store = useDisplayStore()
   letter-spacing: 0.2em;
 }
 
-.hd__nav {
-  display: flex;
-  gap: 8px;
-  margin-left: 6px;
-}
-
-.nav-link {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  height: 32px;
-  padding: 0 12px;
-  border: 2px solid var(--line);
-  color: var(--ink-2);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.1em;
-  text-decoration: none;
-  transition:
-    border-color 0.12s ease,
-    background 0.12s ease,
-    color 0.12s ease;
-}
-
-.nav-link:hover {
-  border-color: var(--ink);
-}
-
-.nav-link.router-link-active {
-  border-color: var(--ink);
-  background: var(--ink);
-  color: var(--paper);
-  box-shadow: var(--shadow-sm);
-}
-
 .hd__right {
   display: flex;
   align-items: center;
@@ -210,9 +161,6 @@ const store = useDisplayStore()
     display: none;
   }
 
-  .nav-link span {
-    display: none;
-  }
 }
 
 @media (max-width: 860px) {

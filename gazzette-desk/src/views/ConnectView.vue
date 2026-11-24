@@ -44,8 +44,8 @@ watch(
         <div class="gate__step">
           <span class="gate__num">3</span>
           <div>
-            <strong>同步尺寸</strong>
-            <p>连接后自动读取屏幕尺寸，随后即可绘制与推送画面</p>
+            <strong>同步尺寸并注册</strong>
+            <p>连接后自动读取屏幕尺寸并向云端注册设备</p>
           </div>
         </div>
       </div>

@@ -4,8 +4,6 @@ import { useAppConfigStore } from '@/stores/app-config'
 import ConnectView from '../views/ConnectView.vue'
 import StudioView from '../views/StudioView.vue'
 import CanvasView from '../views/CanvasView.vue'
-import ImageView from '../views/ImageView.vue'
-import CloudView from '../views/CloudView.vue'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -16,20 +14,17 @@ const router = createRouter({
       component: ConnectView,
     },
     {
+      // 唯一主页面：像素画布 + 左侧组件库（StudioView 提供页头与弹窗布局）
       path: '/',
       component: StudioView,
-      children: [
-        { path: '', name: 'canvas', component: CanvasView },
-        { path: 'image', name: 'image', component: ImageView },
-        { path: 'cloud', name: 'cloud', component: CloudView },
-      ],
+      children: [{ path: '', name: 'canvas', component: CanvasView }],
     },
     { path: '/:pathMatch(.*)*', redirect: '/' },
   ],
 })
 
 /**
- * 蓝牙网关：未连接开发板时只能停留在连接页；云端页面不依赖蓝牙，始终可访问。
+ * 蓝牙网关：未连接开发板时只能停留在连接页。
  * dev 环境（后端 bluetooth-enabled=false）不启用蓝牙连接页，直接进入主界面。
  */
 router.beforeEach(async (to) => {
@@ -41,7 +36,6 @@ router.beforeEach(async (to) => {
     return to.name === 'connect' ? { name: 'canvas' } : true
   }
 
-  if (to.name === 'cloud') return true
   const store = useDisplayStore()
   if (!store.ble.connected && to.name !== 'connect') return { name: 'connect' }
   if (store.ble.connected && to.name === 'connect') return { name: 'canvas' }
