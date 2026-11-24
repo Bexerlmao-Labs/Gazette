@@ -9,6 +9,23 @@ const components = ref<LibComponent[]>(listComponents())
 const builtin = computed(() => components.value.filter((c) => !c.id.startsWith('plugin:')))
 const plugins = computed(() => components.value.filter((c) => c.id.startsWith('plugin:')))
 
+/** 插件组件按 group 折叠成子目录 */
+const pluginGroups = computed(() => {
+  const map = new Map<string, LibComponent[]>()
+  for (const c of plugins.value) {
+    const key = c.group ?? '其他'
+    if (!map.has(key)) map.set(key, [])
+    map.get(key)!.push(c)
+  }
+  return [...map.entries()].map(([label, comps]) => ({ label, comps }))
+})
+
+const collapsed = ref<Record<string, boolean>>({})
+
+function toggleGroup(label: string) {
+  collapsed.value[label] = !collapsed.value[label]
+}
+
 /* ------------------------------------------------------------- 拖拽 / 预览 */
 
 function onDragStart(e: DragEvent, comp: LibComponent) {
@@ -38,20 +55,29 @@ function onDragStart(e: DragEvent, comp: LibComponent) {
       </div>
     </div>
 
-    <div v-if="plugins.length" class="clib__group">
+    <!-- 插件组件：按 group 折叠成子目录 -->
+    <div v-if="pluginGroups.length" class="clib__group">
       <div class="clib__group-label">插件组件</div>
-      <div class="clib__grid">
-        <button
-          v-for="c in plugins"
-          :key="c.id"
-          class="comp"
-          draggable="true"
-          @dragstart="onDragStart($event, c)"
-          @click="emit('preview', c)"
-        >
-          <PixelIcon :name="c.icon" :size="18" />
-          <span class="comp__name">{{ c.name }}</span>
+      <div v-for="g in pluginGroups" :key="g.label" class="subdir">
+        <button class="subdir__head" type="button" @click="toggleGroup(g.label)">
+          <PixelIcon :name="collapsed[g.label] ? 'spark' : 'close'" :size="10" />
+          <span class="subdir__label">{{ g.label }}</span>
+          <span class="subdir__count">{{ g.comps.length }}</span>
         </button>
+        <div v-show="!collapsed[g.label]" class="clib__grid clib__grid--sub">
+          <button
+            v-for="c in g.comps"
+            :key="c.id"
+            class="comp"
+            draggable="true"
+            :title="c.desc"
+            @dragstart="onDragStart($event, c)"
+            @click="emit('preview', c)"
+          >
+            <PixelIcon :name="c.icon" :size="16" />
+            <span class="comp__name">{{ c.name }}</span>
+          </button>
+        </div>
       </div>
     </div>
   </aside>
@@ -88,6 +114,48 @@ function onDragStart(e: DragEvent, comp: LibComponent) {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   gap: 6px;
+}
+
+.clib__grid--sub {
+  margin-top: 4px;
+}
+
+.subdir {
+  display: flex;
+  flex-direction: column;
+}
+
+.subdir__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  cursor: pointer;
+  text-align: left;
+}
+
+.subdir__head:hover {
+  border-color: var(--ink);
+}
+
+.subdir__label {
+  flex: 1;
+  min-width: 0;
+  color: var(--ink-2);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.subdir__count {
+  color: var(--muted);
+  font-size: 9px;
 }
 
 .comp {

@@ -11,8 +11,9 @@
 
 import { useDisplayStore } from '@/stores/display'
 import { ensureFontLoaded, textToBuffer } from './font'
+import { resolveTemplate } from './variables'
 
-export type LibKind = 'text' | 'datetime' | 'icon' | 'qr' | 'line' | 'rect' | 'chart'
+export type LibKind = 'text' | 'datetime' | 'icon' | 'qr' | 'line' | 'rect' | 'chart' | 'pie'
 
 export interface LibComponent {
   /** 内置组件为固定 id；插件组件建议 `plugin:<名>` */
@@ -25,9 +26,13 @@ export interface LibComponent {
   w: number
   h: number
   kind: LibKind
-  /** 文本模板，支持 {变量} 占位 */
+  /** 文本模板，支持 {变量} 占位（展示时用虚拟示例内容） */
   template?: string
   attrs: Record<string, string>
+  /** 插件组件子目录名：组件库按此折叠分组（如「GLM Token 用量」） */
+  group?: string
+  /** 需要在编辑时填入数据源 API Key（如 GLM/DeepSeek token 组件） */
+  needsApiKey?: boolean
 }
 
 /** 放置在画布上的组件实例（图层，可随时移动/缩放/编辑，内容实时叠加到画布） */
@@ -170,22 +175,27 @@ function drawComponent(ctx: CanvasRenderingContext2D, comp: LibComponent) {
    * 点阵文字：按「完全容纳」进组件框的整数倍放大（1x/2x/3x…），
    * 小于 1x 时按目标像素覆盖率面积采样缩小 —— 任意尺寸下笔画都保持锐利。
    */
-  const drawText = (text: string) => {
+  /**
+   * 点阵文字：按「完全容纳」进目标框的整数倍放大（1x/2x/3x…），
+   * 小于 1x 时按目标像素覆盖率面积采样缩小 —— 任意尺寸下笔画都保持锐利。
+   * 可传入子区域（标题栏等局部绘制）。
+   */
+  const drawText = (text: string, ox0 = 0, oy0 = 0, tw = w, th = h) => {
     const buf = textToBuffer(text)
     if (!buf.width || !buf.height) return
-    const raw = Math.min(w / buf.width, h / buf.height)
+    const raw = Math.min(tw / buf.width, th / buf.height)
     const s = raw >= 1 ? Math.floor(raw) : raw
     if (s <= 0) return
-    const ox = Math.round((w - buf.width * s) / 2)
-    const oy = Math.round((h - buf.height * s) / 2)
+    const ox = ox0 + Math.round((tw - buf.width * s) / 2)
+    const oy = oy0 + Math.round((th - buf.height * s) / 2)
 
-    for (let y = 0; y < h; y++) {
+    for (let y = Math.max(0, Math.floor(oy0)); y < Math.min(h, oy0 + th); y++) {
       const sy0 = (y - oy) / s
       const sy1 = sy0 + 1 / s
       const row0 = Math.max(0, Math.floor(sy0))
       const row1 = Math.min(buf.height, Math.ceil(sy1))
       if (row0 >= buf.height) break
-      for (let x = 0; x < w; x++) {
+      for (let x = Math.max(0, Math.floor(ox0)); x < Math.min(w, ox0 + tw); x++) {
         const sx0 = (x - ox) / s
         const sx1 = sx0 + 1 / s
         const col0 = Math.max(0, Math.floor(sx0))
@@ -213,7 +223,8 @@ function drawComponent(ctx: CanvasRenderingContext2D, comp: LibComponent) {
 
   switch (comp.kind) {
     case 'text':
-      drawText(comp.template ?? comp.name)
+      // {变量} 在设计视图展示为虚拟示例内容，编辑态保留变量写法
+      drawText(resolveTemplate(comp.template ?? comp.name))
       break
     case 'datetime':
       drawText(strftime(comp.attrs.format || '%H:%M', new Date()))
@@ -250,19 +261,57 @@ function drawComponent(ctx: CanvasRenderingContext2D, comp: LibComponent) {
       break
     }
     case 'chart': {
-      // 样例曲线（云端按数据集真实渲染）
+      // 虚拟样例（云端按数据集真实渲染）：可编辑标题占顶部，坐标轴 + 样例曲线
+      const title = comp.attrs.title
+      let top = 0
+      if (title) {
+        top = Math.max(6, Math.round(h * 0.3))
+        drawText(title, 0, 0, w, top)
+        ctx.fillRect(0, top - 1, w, 1) // 标题分隔线
+      }
+      const py0 = top + 1
+      const ph = h - top - 2
+      if (ph < 3) break
+      // 坐标轴：左轴 + 底轴
+      ctx.fillRect(0, py0, 1, ph)
+      ctx.fillRect(0, py0 + ph - 1, w, 1)
       const series = [3, 5, 4, 7, 6, 9, 8, 11, 10, 13]
-      const pad = 1
+      const pad = 3
       const max = Math.max(...series)
       const min = Math.min(...series)
       const span = Math.max(1, max - min)
       ctx.beginPath()
       series.forEach((v, i) => {
         const x = pad + (i * (w - pad * 2)) / (series.length - 1)
-        const y = h - pad - ((v - min) / span) * (h - pad * 2)
+        const y = py0 + ph - pad - ((v - min) / span) * (ph - pad * 2)
         if (i === 0) ctx.moveTo(x, y)
         else ctx.lineTo(x, y)
       })
+      ctx.stroke()
+      break
+    }
+    case 'pie': {
+      // 虚拟样例饼图（云端按数据集真实渲染）：可编辑标题 + 圆 + 分隔半径
+      const title = comp.attrs.title
+      let cy0 = 0
+      if (title) {
+        const th = Math.max(6, Math.round(h * 0.3))
+        drawText(title, 0, 0, w, th)
+        ctx.fillRect(0, th - 1, w, 1)
+        cy0 = th
+      }
+      const bh = h - cy0
+      const cx = w / 2
+      const cy = cy0 + bh / 2
+      const r = Math.max(2, Math.min(w, bh) / 2 - 1)
+      ctx.beginPath()
+      ctx.arc(cx, cy, r, 0, Math.PI * 2)
+      ctx.stroke()
+      ctx.beginPath()
+      ctx.moveTo(cx, cy)
+      ctx.lineTo(cx + r, cy)
+      ctx.moveTo(cx, cy)
+      ctx.lineTo(cx + r * 0.4, cy + r * 0.9)
       ctx.stroke()
       break
     }
@@ -336,10 +385,14 @@ export function renderToCells(comp: LibComponent): string {
 
 let placedSeq = 0
 
-/** 文本类内容在 1x 点阵下的实际尺寸（画布像素） */
+/** 文本类内容在 1x 点阵下的实际尺寸（画布像素；{变量} 按虚拟示例内容计算） */
 export function textContentSize(comp: LibComponent): { w: number; h: number } | null {
   const text =
-    comp.kind === 'datetime' ? strftime(comp.attrs.format || '%H:%M', new Date()) : comp.template ?? ''
+    comp.kind === 'datetime'
+      ? strftime(comp.attrs.format || '%H:%M', new Date())
+      : comp.kind === 'text'
+        ? resolveTemplate(comp.template ?? '')
+        : comp.template ?? ''
   const buf = textToBuffer(text)
   if (!buf.width || !buf.height) return null
   return { w: buf.width, h: buf.height }
